@@ -1,31 +1,64 @@
+//
+//  InteractionController.cs
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/XingMai/XmaxSDK-Unity
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 using System;
 using System.Collections.Generic;
+using UnityEngine;
 
 namespace Xmax.SDK
 {
+
     /// <summary>
-    /// 校验生成任务和编码画面内的交互点后发送轨迹。
+    /// Validates normalized host input and forwards internal media points to the active generation.
     /// </summary>
-    internal sealed class InteractionController
+    internal sealed class InteractionController : IInteractionController
     {
+
+        /// <summary>The transport submitting normalized points for the current task.</summary>
         private readonly IStreamController _stream;
 
+        /// <summary>The generation task accepting normalized trajectories, or null while interactions are stopped.</summary>
+        private string _taskId;
+
         /// <summary>
-        /// 注入房间交互消息的发送入口。
+        /// Creates a normalized interaction controller for one stream coordinator.
         /// </summary>
-        /// <param name="stream">当前管理器的房间信令和视频传输入口。</param>
-        internal InteractionController(IStreamController stream)
+        internal InteractionController(
+            IStreamController stream
+        )
         {
             _stream = stream;
         }
 
+        /// <inheritdoc/>
+        public void StartInteraction(
+            string taskId
+        )
+        {
+            if (string.IsNullOrWhiteSpace(taskId))
+                throw new XmaxException(
+                    XmaxErrorCode.InvalidConfiguration,
+                    "An interaction requires a generation task identifier."
+                );
+            _taskId = taskId;
+        }
+
+        /// <inheritdoc/>
+        public void StopInteraction() => _taskId = null;
+
         /// <summary>
-        /// 校验轨迹点位于编码画面内，并发送给当前生成任务。
+        /// Validates finite zero-to-one coordinates before submitting the complete trajectory.
         /// </summary>
-        /// <param name="tracks">以编码画面左上角为原点的交互点序列，坐标须位于画面内。</param>
-        /// <param name="format">本地视频编码格式，宽高须为正偶数且帧率大于零。</param>
-        /// <param name="taskId">本次生成任务的唯一标识，用于校验任务归属。</param>
-        internal void Send(IReadOnlyList<XmaxTrackPoint> tracks, RealtimeVideoFormat format, string taskId)
+        public void Send(
+            IReadOnlyList<Vector2> tracks
+        )
         {
             if (tracks == null)
                 throw new ArgumentNullException(nameof(tracks));
@@ -33,19 +66,34 @@ namespace Xmax.SDK
             if (tracks.Count == 0)
                 return;
 
-            if (string.IsNullOrEmpty(taskId))
-                throw new XmaxException(XmaxErrorCode.RtcError, "Tracks require active realtime generation.");
+            var taskId = _taskId;
+            if (taskId == null)
+                throw new XmaxException(
+                    XmaxErrorCode.RtcError,
+                    "Tracks require active realtime generation."
+                );
 
+            var points = new RealtimePoint[tracks.Count];
             for (var i = 0; i < tracks.Count; i++)
             {
                 var point = tracks[i];
-                if (point.X < 0 || point.X >= format.Width || point.Y < 0 || point.Y >= format.Height)
+                if (float.IsNaN(point.x) || float.IsInfinity(point.x) ||
+                    float.IsNaN(point.y) || float.IsInfinity(point.y) ||
+                    point.x < 0 || point.x > 1 || point.y < 0 || point.y > 1)
                     throw new XmaxException(
                         XmaxErrorCode.InvalidConfiguration,
-                        "Track point is outside the encoder video bounds.");
+                        "Track coordinates must be finite values between zero and one."
+                    );
+                points[i] = new RealtimePoint(
+                    point.x,
+                    point.y
+                );
             }
 
-            _stream.SendTracks(tracks, taskId);
+            _stream.SendTracks(
+                points,
+                taskId
+            );
         }
     }
 }

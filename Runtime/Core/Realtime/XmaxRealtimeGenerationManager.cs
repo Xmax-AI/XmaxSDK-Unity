@@ -1,70 +1,165 @@
+//
+//  XmaxRealtimeGenerationManager.cs
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/XingMai/XmaxSDK-Unity
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
+using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using UnityEngine;
 
 namespace Xmax.SDK
 {
+
     /// <summary>
-    /// 管理生成条件缓存、任务标识以及 SEI 确认后的首帧就绪流程。
+    /// Manages generation conditions, interactions, result confirmation, and first-frame readiness.
     /// </summary>
     internal sealed class XmaxRealtimeGenerationManager
     {
-        // 信令与渲染依赖。
-        private readonly IStreamController _stream;
-        private readonly RenderController _render;
 
-        // 最近一次成功的生成条件。
+        /// <summary>The task-bound interaction controller shared by generation startup, updates, and cleanup.</summary>
+        private readonly IInteractionController _interaction;
+
+        /// <summary>
+        /// The room signaling and media transport controller.
+        /// </summary>
+        private readonly IStreamController _stream;
+
+        /// <summary>
+        /// The remote track and first-frame readiness controller.
+        /// </summary>
+        private readonly IRenderController _render;
+
+        /// <summary>The identifier factory for each new generation task.</summary>
+        private readonly Func<string> _taskIdFactory;
+
+        /// <summary>The startup timing record shared with connection and stream controllers.</summary>
+        private readonly RealtimeTiming _timing;
+
+        /// <summary>
+        /// The last successfully applied generation conditions.
+        /// </summary>
         private RealtimeContext _context;
 
         /// <summary>
-        /// 已就绪的生成任务标识；未生成或已停止时为 null。
+        /// The active ready generation task identifier, or null before startup or after stopping.
         /// </summary>
         internal string TaskId { get; private set; }
 
         /// <summary>
-        /// 注入生成信令和远端渲染依赖。
+        /// Creates a generation coordinator.
         /// </summary>
-        /// <param name="stream">当前管理器的房间信令和视频传输入口。</param>
-        /// <param name="render">当前管理器的远端轨道及首帧就绪控制器。</param>
-        internal XmaxRealtimeGenerationManager(IStreamController stream, RenderController render)
+        internal XmaxRealtimeGenerationManager(
+            IInteractionController interaction,
+            IStreamController stream,
+            IRenderController render,
+            RealtimeTiming timing = null,
+            Func<string> taskIdFactory = null
+        )
         {
+            _interaction = interaction;
             _stream = stream;
             _render = render;
+            _timing = timing;
+            _taskIdFactory = taskIdFactory ?? CreateTaskId;
+        }
+
+        /// <summary>Creates a task identifier from an unpadded Base64URL UUID with the Unity platform marker.</summary>
+        internal static string CreateTaskId()
+        {
+            var bytes = Guid.NewGuid().ToByteArray();
+            // Convert the mixed-endian GUID layout to UUID network byte order.
+            Array.Reverse(
+                bytes,
+                0,
+                4
+            );
+            Array.Reverse(
+                bytes,
+                4,
+                2
+            );
+            Array.Reverse(
+                bytes,
+                6,
+                2
+            );
+            var encoded = Convert.ToBase64String(bytes).TrimEnd('=').Replace(
+                '+',
+                '-'
+            ).Replace(
+                '/',
+                '_'
+            );
+            return "task-" + encoded + "?os=unity";
+        }
+
+        /// <summary>Requires explicit conditions or previously applied conditions before any online startup.</summary>
+        internal void ValidateContext(
+            RealtimeContext context
+        )
+        {
+            if (context == null && _context == null)
+                throw new XmaxException(
+                    XmaxErrorCode.InvalidConfiguration,
+                    "A realtime context is required for the first generation."
+                );
         }
 
         /// <summary>
-        /// 启动生成并等待首帧；已有任务时仅更新非空条件，失败时停止本次生成。
+        /// Starts generation and waits for result confirmation and the first frame; an existing task updates
+        /// its conditions.
         /// </summary>
-        /// <param name="context">生成条件；首次生成必须提供，后续可传 null 复用最近一次成功条件。</param>
-        /// <param name="format">本地视频编码格式，宽高须为正偶数且帧率大于零。</param>
-        /// <param name="token">当前操作或循环的取消令牌。</param>
-        /// <returns>已就绪或继续复用的生成任务标识。</returns>
         internal async Task<string> StartAsync(
             RealtimeContext context,
             RealtimeVideoFormat format,
-            CancellationToken token)
+            CancellationToken token,
+            bool faceRestoration = false
+        )
         {
             token.ThrowIfCancellationRequested();
+            ValidateContext(context);
+            var resolved = context ?? _context;
             if (TaskId != null)
             {
-                if (context != null)
-                {
-                    _stream.ChangeGenerationCondition(context, format, TaskId);
-                    _context = context;
-                }
-
-                return TaskId; // 生成中传入空条件时复用当前任务。
+                await _stream.ChangeGenerationConditionAsync(
+                    resolved,
+                    format,
+                    TaskId,
+                    token,
+                    faceRestoration
+                );
+                token.ThrowIfCancellationRequested();
+                _interaction.StartInteraction(TaskId);
+                token.ThrowIfCancellationRequested();
+                _context = resolved;
+                return TaskId;
             }
 
-            var resolved = context ?? _context ?? throw new XmaxException(
-                XmaxErrorCode.InvalidConfiguration,
-                "A realtime context is required for the first generation.");
             _render.BeginGeneration();
 
             try
             {
-                var taskId = await _stream.StartGenerationAsync(resolved, format, token);
+                var taskId = _taskIdFactory();
+                await _stream.StartGenerationAsync(
+                    taskId,
+                    resolved,
+                    format,
+                    token,
+                    faceRestoration
+                );
+                token.ThrowIfCancellationRequested();
+                _interaction.StartInteraction(taskId);
+                token.ThrowIfCancellationRequested();
                 await _render.WaitUntilRemoteFrameReadyAsync(token);
                 token.ThrowIfCancellationRequested();
+                _timing?.FinishFirstFrame(taskId);
                 _context = resolved;
                 TaskId = taskId;
 
@@ -79,18 +174,23 @@ namespace Xmax.SDK
         }
 
         /// <summary>
-        /// 使任务和远端帧失效并停止生成，保留上一次成功的生成条件。
+        /// Stops interactions and invalidates the generation and remote frame wait while retaining successful conditions.
         /// </summary>
-        /// <returns>生成信令及其后台循环已停止的任务。</returns>
         internal async Task StopAsync()
         {
             TaskId = null;
+            _interaction.StopInteraction();
             _render.ResetGeneration();
             await _stream.StopGenerationAsync();
         }
 
+        /// <summary>Submits normalized input through the interaction binding owned by the current generation.</summary>
+        internal void SendTracks(
+            IReadOnlyList<Vector2> tracks
+        ) => _interaction.Send(tracks);
+
         /// <summary>
-        /// 清除成功条件缓存，下一次生成必须显式提供条件。
+        /// Clears cached conditions so the next generation requires explicit conditions.
         /// </summary>
         internal void ResetContext() => _context = null;
     }

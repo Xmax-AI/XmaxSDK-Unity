@@ -1,160 +1,290 @@
+//
+//  IXmaxRealtimeManager.cs
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/XingMai/XmaxSDK-Unity
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using UnityEngine;
 
 namespace Xmax.SDK
 {
+
     /// <summary>
-    /// 实时 Camera 流的公开入口，负责本地输入、连接、生成和资源清理；在创建管理器的 Unity 主线程调用。
+    /// Coordinates external media, realtime generation, and cleanup on the creating Unity main thread.
     /// </summary>
+    ///
     /// <remarks>
-    /// 应在 Unity 主线程创建管理器并调用其 API。异步操作使用 Unity 同步上下文恢复，清理期间不接纳新操作。
+    /// Create managers and call their APIs on the Unity main thread. Await asynchronous operations without
+    /// blocking that thread. Local preview does not require credentials; online configuration is validated when
+    /// connecting.
     /// </remarks>
     public interface IXmaxRealtimeManager
     {
+
         /// <summary>
-        /// 当前管理器使用的模型配置。
+        /// The immutable model and adaptive quality settings.
         /// </summary>
         RealtimeConfiguration Options { get; }
 
         /// <summary>
-        /// 最近提交的连接和生成状态快照。
+        /// The latest committed connection and generation state.
         /// </summary>
         RealtimeState CurrentState { get; }
 
         /// <summary>
-        /// 当前管理器有效的本地流；尚未创建或已关闭时为 null。
+        /// The applied uplink level, or null outside an active connection.
+        /// </summary>
+        RealtimeQualityLevel? UplinkQualityLevel { get; }
+
+        /// <summary>
+        /// The submitted downlink level, or null outside an active connection.
+        /// </summary>
+        RealtimeQualityLevel? DownlinkQualityLevel { get; }
+
+        /// <summary>
+        /// The current stable generation canvas.
+        /// </summary>
+        RealtimeVideoFormat? GenerationVideoFormat { get; }
+
+        /// <summary>
+        /// A snapshot of the successfully submitted transport settings.
+        /// </summary>
+        RealtimeQualityConfiguration QualityConfiguration { get; }
+
+        /// <summary>
+        /// Occurs after transport settings have been successfully submitted.
+        /// </summary>
+        event Action<RealtimeQualityConfiguration> QualityChanged;
+
+        /// <summary>
+        /// Changes uplink encoding while generating; later automatic adaptation remains enabled.
+        /// </summary>
+        Task SetUplinkQualityLevelAsync(
+            RealtimeQualityLevel level,
+            CancellationToken cancellationToken = default
+        );
+
+        /// <summary>
+        /// Changes return dimensions while generating; completion means signaling was submitted.
+        /// </summary>
+        Task SetDownlinkQualityLevelAsync(
+            RealtimeQualityLevel level,
+            CancellationToken cancellationToken = default
+        );
+
+        /// <summary>
+        /// The current valid local stream, or null before creation or after closing.
         /// </summary>
         RealtimeMediaStream LocalStream { get; }
 
         /// <summary>
-        /// 连接或生成状态变化时触发；订阅者异常不会中断 SDK 流程。
+        /// Occurs when state changes. Registration immediately delivers the current state; subscriber exceptions do not interrupt SDK cleanup.
         /// </summary>
         event Action<RealtimeState> StateChanged;
 
         /// <summary>
-        /// 当前生成收到有效远端帧时触发；跨回调保留帧需先 Clone。
+        /// Occurs for valid frames of the active generation. Clone frames retained after the callback.
         /// </summary>
         event Action<XmaxVideoFrame> RemoteFrameReceived;
 
+        /// <summary>Sets the remote video packet handler; passing null removes it.</summary>
+        ///
+        /// <remarks>
+        /// Call this method on the Unity main thread. Callbacks run on a serial background queue and own
+        /// their pixel arrays. Do not call Unity APIs from the callback. Output is bounded to 256 packets
+        /// and 32 MiB; dropped frames mark the next packet as discontinuous. Passing null discards queued
+        /// output; an in-flight callback may finish.
+        /// </remarks>
+        void SetRemoteMediaFrameListener(
+            Action<RealtimeMediaFrame> listener
+        );
+
         /// <summary>
-        /// 异步致命错误完成清理后触发；被 await 的操作失败直接通过异常返回。
+        /// Occurs after fatal background failure cleanup. Awaited operation failures are returned through their
+        /// tasks.
         /// </summary>
         event Action<XmaxException> ErrorOccurred;
 
         /// <summary>
-        /// 服务端会话关闭失败时触发的可恢复警告，本地连接资源仍已清理。
+        /// Occurs when server session closure fails after local connection resources have been released.
         /// </summary>
         event Action<XmaxException> CleanupWarning;
 
         /// <summary>
-        /// 有效连接中的本地上下行网络质量更新。
+        /// Occurs when the active connection's directional network ratings change.
         /// </summary>
         event Action<RealtimeNetworkQuality> NetworkQualityChanged;
 
+        /// <summary>Occurs for measured uplink video statistics, or null when unpublished or disconnected.</summary>
+        event Action<UplinkVideoStatistics> UplinkVideoStatisticsChanged;
+
+        /// <summary>Occurs for the current result user's video statistics, or null when its binding clears.</summary>
+        event Action<DownlinkVideoStatistics> DownlinkVideoStatisticsChanged;
+
+        /// <summary>Occurs when device encoding becomes limited or recovers, with a suggested format when valid.</summary>
+        event Action<RealtimePerformanceAlarm> PerformanceAlarm;
+
         /// <summary>
-        /// 使用当前模型的默认 Camera 编码规格创建本地输入流，可在未连接时预览。
+        /// Creates or replaces an external input stream while disconnected. Media sizing preserves its aspect
+        /// ratio within model limits.
         /// </summary>
-        /// <returns>采用模型默认宽高和帧率的本地流；宿主仍需持续推送 Camera 帧。</returns>
-        /// <exception cref="XmaxException">自定义模型没有默认规格，或当前状态不允许替换本地流。</exception>
+        ///
+        /// <remarks>
+        /// The explicit format describes source dimensions and rate. VideoFormat on the returned stream is the
+        /// resolved four-aligned media baseline. Your app owns camera permissions, capture, and input pacing.
+        /// </remarks>
         RealtimeMediaStream CreateLocalExternalStream();
 
         /// <summary>
-        /// 创建或替换本地 Camera 输入流，可在未连接时预览；连接或异步操作期间不可替换。
+        /// Creates or replaces an external input stream while disconnected. Media sizing preserves its aspect
+        /// ratio within model limits.
         /// </summary>
-        /// <param name="format">本地视频编码格式，宽高须为正偶数且帧率大于零；Pro 须精确匹配固定分辨率。</param>
-        /// <returns>属于此管理器的新本地流，旧本地流随即失效。</returns>
-        /// <exception cref="XmaxException">编码格式无效，或当前线程、连接、操作状态不允许替换本地流。</exception>
-        RealtimeMediaStream CreateLocalExternalStream(RealtimeVideoFormat format);
+        ///
+        /// <remarks>
+        /// The explicit format describes source dimensions and rate. VideoFormat on the returned stream is the
+        /// resolved four-aligned media baseline. Your app owns camera permissions, capture, and input pacing.
+        /// </remarks>
+        RealtimeMediaStream CreateLocalExternalStream(
+            RealtimeVideoFormat format
+        );
+
+        /// <summary>Binds and starts a host-owned video source without creating an online session.</summary>
+        ///
+        /// <remarks>Start and stop run on the Unity main thread; frames may arrive through the sink from any capture thread.</remarks>
+        Task<RealtimeMediaStream> CreateExternalVideoStreamAsync(
+            IRealtimeExternalVideoSource source,
+            CancellationToken cancellationToken = default
+        );
+
+        /// <summary>Stops the local external source or direct-input stream after realtime has been disconnected.</summary>
+        Task StopExternalVideoStreamAsync(
+            CancellationToken cancellationToken = default
+        );
 
         /// <summary>
-        /// 创建服务端会话并加入 RTC 房间；失败或取消时回滚连接资源。
+        /// Creates a server session and joins RTC. Failure or cancellation rolls back the connection while
+        /// preserving local media.
         /// </summary>
-        /// <param name="localStream">由当前管理器创建且仍有效的本地外部视频流。</param>
-        /// <param name="cancellationToken">调用方取消令牌；取消后停止等待或撤销当前操作。</param>
-        /// <returns>可接收生成视频的远端流，此时尚未启动生成。</returns>
-        /// <exception cref="XmaxException">配置、调用状态或平台无效，或会话与 RTC 连接失败。</exception>
-        /// <exception cref="OperationCanceledException">调用方取消或清理操作撤销了本次连接。</exception>
+        ///
+        /// <remarks>
+        /// The stream must belong to this manager. Dimension overloads create a local external stream. Online
+        /// RTC is supported only in Android Player.
+        /// </remarks>
         Task<RealtimeMediaStream> ConnectAsync(
             RealtimeMediaStream localStream,
-            CancellationToken cancellationToken = default);
+            CancellationToken cancellationToken = default
+        );
 
         /// <summary>
-        /// 创建服务端会话并加入 RTC 房间；失败或取消时回滚连接资源。
+        /// Creates a server session and joins RTC. Failure or cancellation rolls back the connection while
+        /// preserving local media.
         /// </summary>
-        /// <param name="format">本地视频编码格式，宽高须为正偶数且帧率大于零。</param>
-        /// <param name="cancellationToken">调用方取消令牌；取消后停止等待或撤销当前操作。</param>
-        /// <returns>可接收生成视频的远端流，此时尚未启动生成。</returns>
+        ///
         /// <remarks>
-        /// 此重载会创建或替换管理器的本地流；已有连接时不能重复连接。
+        /// The stream must belong to this manager. Dimension overloads create a local external stream. Online
+        /// RTC is supported only in Android Player.
         /// </remarks>
-        /// <exception cref="XmaxException">配置、调用状态或平台无效，或会话与 RTC 连接失败。</exception>
-        /// <exception cref="OperationCanceledException">调用方取消或清理操作撤销了本次连接。</exception>
         Task<RealtimeMediaStream> ConnectAsync(
             RealtimeVideoFormat format,
-            CancellationToken cancellationToken = default);
+            CancellationToken cancellationToken = default
+        );
 
         /// <summary>
-        /// 在已连接状态下直接向 RTC 推送一帧 Camera 数据。
+        /// Normalizes an external frame to the media baseline and transmits it during generation startup or execution.
         /// </summary>
-        /// <param name="frame">需要处理的视频帧；调用期间不得修改其像素平面和行步长。</param>
+        ///
         /// <remarks>
-        /// 此入口直接发布至 RTC；需要本地预览时，通过 LocalStream.PushVideoFrame 输入。
+        /// Requires an active connection. Frames supplied before generation starts are not transmitted.
+        /// Source-bound streams receive input through their external frame sink.
+        /// Do not modify pixel arrays or strides during submission. Timestamps are in microseconds and are
+        /// converted to milliseconds for RTC. Rotation is metadata; your app supplies correctly oriented input.
         /// </remarks>
-        /// <exception cref="XmaxException">未连接、正在清理、线程不符合要求，或帧数据无效。</exception>
-        /// <exception cref="ArgumentNullException">允许推帧时传入的 frame 为 null。</exception>
-        void PushVideoFrame(XmaxVideoFrame frame);
+        void PushVideoFrame(
+            XmaxVideoFrame frame
+        );
 
         /// <summary>
-        /// 向当前生成任务发送编码画面内的交互轨迹，非生成状态不能发送有效轨迹。
+        /// Submits normalized media coordinates to the confirmed generation task.
         /// </summary>
-        /// <param name="tracks">以编码画面左上角为原点的交互点序列，坐标须位于画面内。</param>
-        void SendTracks(IReadOnlyList<XmaxTrackPoint> tracks);
-
-        /// <summary>
-        /// 启动或更新生成；首次启动等待任务确认和远端首帧，已有生成任务时更新条件。
-        /// </summary>
-        /// <param name="context">生成条件；首次生成必须提供，后续可传 null 复用最近一次成功条件。</param>
-        /// <param name="cancellationToken">调用方取消令牌；取消后停止等待或撤销当前操作。</param>
-        /// <returns>首次生成的首帧已就绪，或当前任务条件已更新的任务。</returns>
-        /// <exception cref="XmaxException">没有可复用的首次生成条件、调用状态无效，或生成确认、首帧等待失败。</exception>
-        /// <exception cref="OperationCanceledException">调用方取消或清理操作撤销了本次启动。</exception>
-        Task StartGenerationAsync(RealtimeContext context = null, CancellationToken cancellationToken = default);
-
-        /// <summary>
-        /// 使用本管理器的本地流按需连接，再启动或更新生成；整个调用占用同一个操作租约。
-        /// </summary>
-        /// <param name="localStream">由当前管理器创建且仍有效的本地外部视频流。</param>
-        /// <param name="context">生成条件；首次生成必须提供，后续可传 null 复用最近一次成功条件。</param>
-        /// <param name="cancellationToken">调用方取消令牌；取消后停止等待或撤销当前操作。</param>
-        /// <returns>当前连接的远端流；首次启动在任务确认及首帧就绪后返回。</returns>
+        ///
         /// <remarks>
-        /// 连接阶段失败会回滚连接；连接成功后的生成阶段失败保留连接，便于重新生成。
+        /// Each Vector2 ranges from top-left (0, 0) to bottom-right (1, 1) across the full media.
+        /// Values must be finite. Transport quality changes do not change this coordinate space.
         /// </remarks>
-        /// <exception cref="XmaxException">没有可复用的首次生成条件、调用状态无效，或生成确认、首帧等待失败。</exception>
-        /// <exception cref="OperationCanceledException">调用方取消或清理操作撤销了本次启动。</exception>
+        void SendTracks(
+            IReadOnlyList<Vector2> tracks
+        );
+
+        /// <summary>
+        /// Starts or updates generation. Initial startup waits for result-stream confirmation and the first
+        /// valid remote frame.
+        /// </summary>
+        ///
+        /// <remarks>
+        /// The first generation requires conditions. Null reuses the last successful conditions. Updating an
+        /// active generation retains its task. Newer public generation requests replace unfinished requests.
+        /// Startup failure or caller cancellation releases the connection. Condition updates complete after
+        /// queue admission; cancellation does not retract admitted signaling or stop the existing generation.
+        /// </remarks>
+        Task StartGenerationAsync(
+            RealtimeContext context = null,
+            bool faceRestoration = false,
+            CancellationToken cancellationToken = default
+        );
+
+        /// <summary>
+        /// Starts or updates generation. Initial startup waits for result-stream confirmation and the first
+        /// valid remote frame.
+        /// </summary>
+        ///
+        /// <remarks>
+        /// The first generation requires conditions. Null reuses the last successful conditions. Updating an
+        /// active generation retains its task. Newer public generation requests replace unfinished requests.
+        /// Startup failure or caller cancellation releases the connection. Condition updates complete after
+        /// queue admission; cancellation does not retract admitted signaling or stop the existing generation.
+        /// </remarks>
         Task<RealtimeMediaStream> StartGenerationAsync(
             RealtimeMediaStream localStream,
             RealtimeContext context,
-            CancellationToken cancellationToken = default);
+            bool faceRestoration = false,
+            CancellationToken cancellationToken = default
+        );
+
+        /// <summary>Starts or updates generation with explicit caller cancellation.</summary>
+        Task StartGenerationAsync(
+            RealtimeContext context,
+            CancellationToken cancellationToken
+        );
+
+        /// <summary>Connects and starts generation with explicit caller cancellation.</summary>
+        Task<RealtimeMediaStream> StartGenerationAsync(
+            RealtimeMediaStream localStream,
+            RealtimeContext context,
+            CancellationToken cancellationToken
+        );
 
         /// <summary>
-        /// 停止生成并保留已有连接和成功条件；独立连接操作进行中时不取消该连接。
+        /// Stops generation, leaves the RTC room, and closes the session while retaining the engine and local preview.
         /// </summary>
-        /// <returns>生成清理已完成的任务；一步式启动仍在连接阶段时同时清理该连接。</returns>
-        Task StopGenerationAsync();
-
-        /// <summary>
-        /// 停止生成并清理 RTC 和服务端会话，保留本地流用于预览或重新连接。
-        /// </summary>
-        /// <returns>连接清理结束的任务，重复请求合并处理。</returns>
         Task DisconnectAsync();
 
+        /// <summary>Disconnects realtime with an explicit normal, orientation-change, or failure reason.</summary>
+        Task DisconnectAsync(
+            RealtimeReason reason
+        );
+
         /// <summary>
-        /// 断开连接并使本地流失效；管理器可重新创建本地流后继续使用。
+        /// Disconnects and invalidates local media. The manager can be reused after creating a new local
+        /// stream.
         /// </summary>
-        /// <returns>全部清理结束的任务，重复请求合并处理。</returns>
         Task CloseAsync();
     }
 }

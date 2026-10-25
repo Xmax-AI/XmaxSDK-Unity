@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using NUnit.Framework;
+using UnityEngine;
 using UnityEngine.TestTools;
 
 namespace Xmax.SDK.Tests
@@ -18,14 +19,14 @@ namespace Xmax.SDK.Tests
         {
             XmaxLogger.Configure(XmaxLoggerOption.None);
             _sessions = new FakeSessions(); _stream = new FakeStream();
-            _manager = new XmaxRealtimeManager(new XmaxConfiguration("test"), new RealtimeConfiguration(Models.Realtime(RealtimeModel.X2_0)), _sessions, _stream);
+            _manager = new XmaxRealtimeManager(new XmaxConfiguration("test"), new RealtimeConfiguration(RealtimeModel.X2_1_1_Preview_CN, false), _sessions, _stream);
         }
         [UnityTearDown] public IEnumerator TearDown() => AsyncTest.Run(() => _manager.CloseAsync());
 
         [UnityTest] public IEnumerator LocalCameraPreviewDoesNotRequireApiKey() => AsyncTest.Run(async () =>
         {
             var manager = new XmaxClient(new XmaxConfiguration("")).CreateRealtimeManager(
-                new RealtimeConfiguration(Models.Realtime(RealtimeModel.X2_0)));
+                new RealtimeConfiguration(RealtimeModel.X2_1_1_Preview_CN, false));
             try
             {
                 var local = manager.CreateLocalExternalStream(Format);
@@ -63,10 +64,7 @@ namespace Xmax.SDK.Tests
             Assert.AreEqual(taskId, _manager.CurrentState.TaskId);
             Assert.AreEqual(1, _sessions.Created);
             Assert.AreEqual(1, _stream.Starts);
-            Assert.AreEqual(1, _stream.Updates);
-            await _manager.StopGenerationAsync();
-            Assert.AreSame(remote, await _manager.StartGenerationAsync(local, null));
-            Assert.AreEqual(2, _stream.Starts);
+            Assert.AreEqual(2, _stream.Updates);
         });
         [UnityTest] public IEnumerator CombinedStartRejectsForeignAndReplacedSources() => AsyncTest.Run(async () =>
         {
@@ -85,40 +83,40 @@ namespace Xmax.SDK.Tests
             }
             finally { await other.CloseAsync(); }
         });
-        [UnityTest] public IEnumerator CombinedStartHoldsOperationAcrossConnectedNotification() => AsyncTest.Run(async () =>
+        [UnityTest] public IEnumerator NewGenerationReplacesPendingRequestAfterCleanup() => AsyncTest.Run(async () =>
         {
             var local = _manager.CreateLocalExternalStream(Format);
-            Task competing = null;
-            _manager.StateChanged += state =>
-            {
-                if (state.ConnectionState == RealtimeConnectionState.Connected) competing = _manager.StartGenerationAsync("competing");
-            };
-            await _manager.StartGenerationAsync(local, new RealtimeContext("first"));
-            await AsyncTest.Throws<XmaxException>(competing);
-            Assert.AreEqual(1, _stream.Starts);
+            _stream.Generate = async token => { await Task.Delay(Timeout.Infinite, token); return "unused"; };
+            var first = _manager.StartGenerationAsync(local, new RealtimeContext("first"));
+            _stream.Generate = null;
+            var second = _manager.StartGenerationAsync(local, new RealtimeContext("second"));
+            await AsyncTest.Throws<OperationCanceledException>(first);
+            await second;
+            Assert.AreEqual(RealtimeConnectionState.Generating, _manager.CurrentState.ConnectionState);
+            Assert.AreEqual(1, _sessions.Created);
         });
-        [UnityTest] public IEnumerator CombinedStartGenerationFailureKeepsConnectionForRetry() => AsyncTest.Run(async () =>
+        [UnityTest] public IEnumerator CombinedStartGenerationFailureReleasesConnectionBeforeRetry() => AsyncTest.Run(async () =>
         {
             var local = _manager.CreateLocalExternalStream(Format);
             _stream.Generate = token => Task.FromException<string>(new XmaxException(XmaxErrorCode.Timeout, "test timeout"));
             await AsyncTest.Throws<XmaxException>(_manager.StartGenerationAsync(local, new RealtimeContext("first")));
-            Assert.AreEqual(RealtimeConnectionState.Connected, _manager.CurrentState.ConnectionState);
-            Assert.AreEqual(0, _sessions.Closed.Count);
+            Assert.AreEqual(RealtimeConnectionState.Ready, _manager.CurrentState.ConnectionState);
+            Assert.AreEqual(1, _sessions.Closed.Count);
             _stream.Generate = null;
             await _manager.StartGenerationAsync(local, new RealtimeContext("retry"));
-            Assert.AreEqual(1, _sessions.Created);
+            Assert.AreEqual(2, _sessions.Created);
         });
-        [UnityTest] public IEnumerator CombinedStartCanBeStoppedWhileSessionCreationIsPending() => AsyncTest.Run(async () =>
+        [UnityTest] public IEnumerator CombinedStartCanBeDisconnectedWhileSessionCreationIsPending() => AsyncTest.Run(async () =>
         {
             var local = _manager.CreateLocalExternalStream(Format);
             var pending = AsyncTest.Pending<XmaxSession>();
             _sessions.Create = token => pending.Task;
             var start = _manager.StartGenerationAsync(local, new RealtimeContext("test"));
-            var stop = _manager.StopGenerationAsync();
+            var disconnect = _manager.DisconnectAsync();
             pending.SetResult(FakeSessions.Session("late"));
             await AsyncTest.Throws<OperationCanceledException>(start);
-            await stop;
-            Assert.AreEqual(RealtimeConnectionState.Disconnected, _manager.CurrentState.ConnectionState);
+            await disconnect;
+            Assert.AreEqual(RealtimeConnectionState.Ready, _manager.CurrentState.ConnectionState);
             Assert.AreEqual(0, _stream.Starts);
             CollectionAssert.AreEqual(new[] { "late" }, _sessions.Closed);
             Assert.AreSame(local, _manager.LocalStream);
@@ -149,7 +147,7 @@ namespace Xmax.SDK.Tests
             await disconnect;
             Assert.AreEqual(0, _stream.Joins);
             CollectionAssert.AreEqual(new[] { "late" }, _sessions.Closed);
-            Assert.AreEqual(RealtimeConnectionState.Disconnected, _manager.CurrentState.ConnectionState);
+            Assert.AreEqual(RealtimeConnectionState.Ready, _manager.CurrentState.ConnectionState);
         });
         [UnityTest] public IEnumerator CleanupBlocksReconnectAndCoalescesDisconnects() => AsyncTest.Run(async () =>
         {
@@ -168,17 +166,19 @@ namespace Xmax.SDK.Tests
             Assert.AreEqual(RealtimeConnectionState.Connected, _manager.CurrentState.ConnectionState);
             Assert.AreEqual(1, _sessions.Closed.Count);
         });
-        [UnityTest] public IEnumerator StopCancelsPendingGenerationWithoutDisconnecting() => AsyncTest.Run(async () =>
+        [UnityTest] public IEnumerator DisconnectCancelsPendingGenerationAndAllowsReconnect() => AsyncTest.Run(async () =>
         {
             await _manager.ConnectAsync(Format);
             _stream.Generate = async token => { await Task.Delay(Timeout.Infinite, token); return "never"; };
             var start = _manager.StartGenerationAsync("first");
-            var stop = _manager.StopGenerationAsync();
+            var disconnect = _manager.DisconnectAsync();
             await AsyncTest.Throws<OperationCanceledException>(start);
-            await stop;
-            Assert.AreEqual(RealtimeConnectionState.Connected, _manager.CurrentState.ConnectionState);
+            await disconnect;
+            Assert.AreEqual(RealtimeConnectionState.Ready, _manager.CurrentState.ConnectionState);
             Assert.IsNull(_manager.CurrentState.TaskId);
+            Assert.AreEqual(1, _sessions.Closed.Count);
             _stream.Generate = null;
+            await _manager.ConnectAsync(Format);
             await _manager.StartGenerationAsync("second");
             Assert.AreEqual(RealtimeConnectionState.Generating, _manager.CurrentState.ConnectionState);
         });
@@ -192,7 +192,7 @@ namespace Xmax.SDK.Tests
             Assert.AreEqual(RealtimeConnectionState.Connected, _manager.CurrentState.ConnectionState);
             _stream.Frame();
             await start;
-            Assert.AreEqual("confirmed", _manager.CurrentState.TaskId);
+            Assert.AreEqual(_stream.LastTaskId, _manager.CurrentState.TaskId);
         });
         [UnityTest] public IEnumerator NilContextReusesTaskAndExplicitContextUpdatesIt() => AsyncTest.Run(async () =>
         {
@@ -203,7 +203,7 @@ namespace Xmax.SDK.Tests
             await _manager.StartGenerationAsync("second");
             Assert.AreEqual(taskId, _manager.CurrentState.TaskId);
             Assert.AreEqual(1, _stream.Starts);
-            Assert.AreEqual(1, _stream.Updates);
+            Assert.AreEqual(2, _stream.Updates);
             Assert.AreEqual(0, _stream.Stops);
         });
         [UnityTest] public IEnumerator FailedContextUpdateKeepsGenerationRunning() => AsyncTest.Run(async () =>
@@ -224,11 +224,11 @@ namespace Xmax.SDK.Tests
             await disconnect;
             Assert.AreEqual(0, _sessions.Created);
         });
-        [UnityTest] public IEnumerator ReentrantDisconnectFromConnectedCannotReturnLiveStream() => AsyncTest.Run(async () =>
+        [UnityTest] public IEnumerator ConnectedNotificationRunsAfterOperationRelease() => AsyncTest.Run(async () =>
         {
             Task disconnect = null;
             _manager.StateChanged += state => { if (state.ConnectionState == RealtimeConnectionState.Connected) disconnect = _manager.DisconnectAsync(); };
-            await AsyncTest.Throws<OperationCanceledException>(_manager.ConnectAsync(Format));
+            await _manager.ConnectAsync(Format);
             await disconnect;
             Assert.AreEqual(1, _sessions.Closed.Count);
         });
@@ -247,12 +247,12 @@ namespace Xmax.SDK.Tests
             Task close = null;
             _manager.StateChanged += state =>
             {
-                if (state.ConnectionState == RealtimeConnectionState.Disconnected) close = _manager.CloseAsync();
+                if (state.ConnectionState == RealtimeConnectionState.Ready) close = _manager.CloseAsync();
             };
             await _manager.DisconnectAsync();
             await close;
             Assert.IsNull(_manager.LocalStream);
-            Assert.AreEqual(RealtimeConnectionState.Disconnected, _manager.CurrentState.ConnectionState);
+            Assert.AreEqual(RealtimeConnectionState.Idle, _manager.CurrentState.ConnectionState);
             Assert.Throws<XmaxException>(() => source.PushVideoFrame(AsyncTest.Frame()));
         });
         [UnityTest] public IEnumerator ReentrantStateChangeDoesNotDeliverObsoleteStateToNextListener() => AsyncTest.Run(async () =>
@@ -267,18 +267,17 @@ namespace Xmax.SDK.Tests
             await AsyncTest.Throws<OperationCanceledException>(_manager.ConnectAsync(Format));
             await disconnect;
             CollectionAssert.DoesNotContain(observed, RealtimeConnectionState.Connecting);
-            Assert.AreEqual(RealtimeConnectionState.Disconnected, observed[observed.Count - 1]);
+            Assert.AreEqual(RealtimeConnectionState.Ready, observed[observed.Count - 1]);
         });
-        [UnityTest] public IEnumerator CancellationFromGeneratingListenerStopsCommittedTask() => AsyncTest.Run(async () =>
+        [UnityTest] public IEnumerator GeneratingNotificationRunsAfterStartupCompletion() => AsyncTest.Run(async () =>
         {
             await _manager.ConnectAsync(Format);
             using (var cancellation = new CancellationTokenSource())
             {
                 _manager.StateChanged += state => { if (state.ConnectionState == RealtimeConnectionState.Generating) cancellation.Cancel(); };
-                await AsyncTest.Throws<OperationCanceledException>(_manager.StartGenerationAsync(new RealtimeContext("test"), cancellation.Token));
-                Assert.AreEqual(RealtimeConnectionState.Connected, _manager.CurrentState.ConnectionState);
-                Assert.IsNull(_manager.CurrentState.TaskId);
-                Assert.Greater(_stream.Stops, 0);
+                await _manager.StartGenerationAsync(new RealtimeContext("test"), cancellation.Token);
+                Assert.AreEqual(RealtimeConnectionState.Generating, _manager.CurrentState.ConnectionState);
+                Assert.NotNull(_manager.CurrentState.TaskId);
             }
         });
         [UnityTest] public IEnumerator FatalErrorIsDeliveredAfterCleanup() => AsyncTest.Run(async () =>
@@ -294,14 +293,14 @@ namespace Xmax.SDK.Tests
             pending.SetResult(true);
             await cleanup;
             Assert.AreEqual(XmaxErrorSeverity.Fatal, failure.Severity);
-            Assert.AreEqual(RealtimeConnectionState.Error, _manager.CurrentState.ConnectionState);
+            Assert.AreEqual(RealtimeConnectionState.Ready, _manager.CurrentState.ConnectionState);
         });
         [UnityTest] public IEnumerator FatalErrorDuringJoinCancelsAndClosesSession() => AsyncTest.Run(async () =>
         {
             _stream.Join = token => Task.Delay(Timeout.Infinite, token);
             var connect = _manager.ConnectAsync(Format);
             _stream.Fail();
-            await AsyncTest.Throws<OperationCanceledException>(connect);
+            await AsyncTest.Throws<XmaxException>(connect);
             await _manager.DisconnectAsync();
             Assert.AreEqual(1, _sessions.Closed.Count);
         });
@@ -349,28 +348,28 @@ namespace Xmax.SDK.Tests
             _manager.CleanupWarning += error => warning = error;
             await _manager.DisconnectAsync();
             Assert.AreEqual(XmaxErrorSeverity.Recoverable, warning.Severity);
-            Assert.AreEqual(RealtimeConnectionState.Disconnected, _manager.CurrentState.ConnectionState);
+            Assert.AreEqual(RealtimeConnectionState.Ready, _manager.CurrentState.ConnectionState);
             await _manager.ConnectAsync(Format);
         });
-        [UnityTest] public IEnumerator TracksRequireGenerationAndEncoderBounds() => AsyncTest.Run(async () =>
+        [UnityTest] public IEnumerator TracksRequireGenerationAndNormalizedBounds() => AsyncTest.Run(async () =>
         {
             await _manager.ConnectAsync(Format);
-            Assert.Throws<XmaxException>(() => _manager.SendTracks(new[] { new XmaxTrackPoint(1, 1) }));
+            Assert.Throws<XmaxException>(() => _manager.SendTracks(new[] { new Vector2(1, 1) }));
             await _manager.StartGenerationAsync("first");
-            Assert.Throws<XmaxException>(() => _manager.SendTracks(new[] { new XmaxTrackPoint(1280, 0) }));
-            _manager.SendTracks(new[] { new XmaxTrackPoint(1279, 719) });
+            Assert.Throws<XmaxException>(() => _manager.SendTracks(new[] { new Vector2(1.01f, 0) }));
+            _manager.SendTracks(new[] { new Vector2(1, 1) });
             Assert.AreEqual(1, _stream.Tracks);
         });
-        [UnityTest] public IEnumerator FrameCallbackCanStopWithoutForwardingStaleManagerFrame() => AsyncTest.Run(async () =>
+        [UnityTest] public IEnumerator FrameCallbackCanDisconnectWithoutForwardingStaleManagerFrame() => AsyncTest.Run(async () =>
         {
             var remote = await _manager.ConnectAsync(Format);
             await _manager.StartGenerationAsync("first");
             var count = 0;
-            Task stop = null;
+            Task disconnect = null;
             _manager.RemoteFrameReceived += frame => count++;
-            remote.VideoTrack.FrameReceived += frame => stop = _manager.StopGenerationAsync();
+            remote.VideoTrack.FrameReceived += frame => disconnect = _manager.DisconnectAsync();
             _stream.Frame();
-            await stop;
+            await disconnect;
             Assert.AreEqual(0, count);
         });
         [UnityTest] public IEnumerator DisconnectReportsNormalReasonAndReconnectClearsIt() => AsyncTest.Run(async () =>
@@ -380,7 +379,7 @@ namespace Xmax.SDK.Tests
             Assert.AreEqual(RealtimeConnectionState.Connected, _manager.CurrentState.ConnectionState);
             Assert.IsNull(_manager.CurrentState.Reason);
             await _manager.DisconnectAsync();
-            Assert.AreEqual(RealtimeConnectionState.Disconnected, _manager.CurrentState.ConnectionState);
+            Assert.AreEqual(RealtimeConnectionState.Ready, _manager.CurrentState.ConnectionState);
             Assert.AreEqual(RealtimeReasonKind.Normal, _manager.CurrentState.Reason.Kind);
             Assert.IsNull(_manager.CurrentState.Reason.Error);
             await _manager.ConnectAsync(Format);
@@ -393,17 +392,17 @@ namespace Xmax.SDK.Tests
             _manager.StateChanged += state => { if (state.ConnectionState == RealtimeConnectionState.Connecting) disconnect = _manager.DisconnectAsync(); };
             await AsyncTest.Throws<OperationCanceledException>(_manager.ConnectAsync(Format));
             await disconnect;
-            Assert.AreEqual(RealtimeConnectionState.Disconnected, _manager.CurrentState.ConnectionState);
+            Assert.AreEqual(RealtimeConnectionState.Ready, _manager.CurrentState.ConnectionState);
             Assert.AreEqual(RealtimeReasonKind.Normal, _manager.CurrentState.Reason.Kind);
         });
         [UnityTest] public IEnumerator ConnectFailureReportsFailureReasonWithThrownError() => AsyncTest.Run(async () =>
         {
-            _stream.RejectPlatform = true;
+            _sessions.Create = token => Task.FromException<XmaxSession>(new XmaxException(XmaxErrorCode.NetworkError, "Session creation failed."));
             XmaxException thrown = null;
             try { await _manager.ConnectAsync(Format); }
             catch (XmaxException exception) { thrown = exception; }
             Assert.NotNull(thrown);
-            Assert.AreEqual(RealtimeConnectionState.Error, _manager.CurrentState.ConnectionState);
+            Assert.AreEqual(RealtimeConnectionState.Ready, _manager.CurrentState.ConnectionState);
             Assert.AreEqual(RealtimeReasonKind.Failure, _manager.CurrentState.Reason.Kind);
             Assert.AreSame(thrown, _manager.CurrentState.Reason.Error);
         });
@@ -414,7 +413,7 @@ namespace Xmax.SDK.Tests
             _manager.ErrorOccurred += error => reported = error;
             _stream.Fail();
             await _manager.DisconnectAsync();
-            Assert.AreEqual(RealtimeConnectionState.Error, _manager.CurrentState.ConnectionState);
+            Assert.AreEqual(RealtimeConnectionState.Ready, _manager.CurrentState.ConnectionState);
             Assert.AreEqual(RealtimeReasonKind.Failure, _manager.CurrentState.Reason.Kind);
             Assert.AreEqual(XmaxErrorSeverity.Fatal, _manager.CurrentState.Reason.Error.Severity);
             Assert.AreSame(reported, _manager.CurrentState.Reason.Error);

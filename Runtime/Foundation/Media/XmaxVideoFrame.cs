@@ -1,104 +1,82 @@
+//
+//  XmaxVideoFrame.cs
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/XingMai/XmaxSDK-Unity
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 using System;
 
 namespace Xmax.SDK
 {
-    /// <summary>
-    /// 外部视频帧支持的内存像素布局。
-    /// </summary>
+
+    /// <summary>The memory layout of raw video pixels.</summary>
     public enum XmaxVideoPixelFormat
     {
-        /// <summary>
-        /// 分别存储 Y、U、V 的 4:2:0 平面格式。
-        /// </summary>
+
+        /// <summary>Planar 4:2:0 pixels stored as separate Y, U, and V planes.</summary>
         I420,
 
-        /// <summary>
-        /// 每像素四字节，依次为 R、G、B、A。
-        /// </summary>
+        /// <summary>Packed four-byte pixels in red, green, blue, alpha order.</summary>
         Rgba,
 
-        /// <summary>
-        /// 每像素四字节，依次为 B、G、R、A。
-        /// </summary>
+        /// <summary>Packed four-byte pixels in blue, green, red, alpha order.</summary>
         Bgra
     }
 
-    /// <summary>
-    /// 视频帧携带的旋转角度元数据；不会直接旋转像素内存。
-    /// </summary>
+    /// <summary>Clockwise rotation metadata carried with a frame; pixel arrays are not rotated.</summary>
     public enum XmaxVideoRotation
     {
-        /// <summary>
-        /// 不旋转。
-        /// </summary>
+
+        /// <summary>No rotation.</summary>
         Rotation0 = 0,
 
-        /// <summary>
-        /// 旋转 90 度。
-        /// </summary>
+        /// <summary>A clockwise 90-degree rotation.</summary>
         Rotation90 = 90,
 
-        /// <summary>
-        /// 旋转 180 度。
-        /// </summary>
+        /// <summary>A clockwise 180-degree rotation.</summary>
         Rotation180 = 180,
 
-        /// <summary>
-        /// 旋转 270 度。
-        /// </summary>
+        /// <summary>A clockwise 270-degree rotation.</summary>
         Rotation270 = 270
     }
 
-    /// <summary>
-    /// 引用像素平面及行步长的视频帧；工厂方法不复制输入数组，跨回调保留时使用 Clone。
-    /// </summary>
+    /// <summary>A video frame referencing pixel planes and row strides without copying input arrays.</summary>
+    ///
+    /// <remarks>Do not modify pixel arrays during submission. SDK-owned callback buffers may be reused; call Clone before retaining a frame after its callback.</remarks>
     public sealed class XmaxVideoFrame
     {
-        /// <summary>
-        /// 视频帧的内存像素布局。
-        /// </summary>
+
+        /// <summary>The memory layout of the pixel planes.</summary>
         public XmaxVideoPixelFormat PixelFormat { get; }
 
-        /// <summary>
-        /// 视频宽度，单位为像素，使用时须为正偶数。
-        /// </summary>
+        /// <summary>The positive even frame width, in pixels.</summary>
         public int Width { get; }
 
-        /// <summary>
-        /// 视频高度，单位为像素，使用时须为正偶数。
-        /// </summary>
+        /// <summary>The positive even frame height, in pixels.</summary>
         public int Height { get; }
 
-        /// <summary>
-        /// 原始像素平面引用；I420 为 Y、U、V 三个平面，RGBA/BGRA 为单平面。
-        /// </summary>
+        /// <summary>The referenced pixel arrays: Y, U, V for I420, or one packed array for RGBA and BGRA.</summary>
         public byte[][] Planes { get; }
 
-        /// <summary>
-        /// 每个像素平面相邻两行起点之间的字节数。
-        /// </summary>
+        /// <summary>The byte distance between adjacent row starts in each pixel plane.</summary>
         public int[] Strides { get; }
 
-        /// <summary>
-        /// 传递给 RTC 的微秒时间戳；默认值为 0。
-        /// </summary>
+        /// <summary>The timestamp forwarded to RTC, in microseconds; the default is zero.</summary>
         public long TimestampMicroseconds { get; }
 
-        /// <summary>
-        /// 随帧传递的旋转元数据。
-        /// </summary>
+        /// <summary>The clockwise rotation metadata accompanying the frame.</summary>
         public XmaxVideoRotation Rotation { get; }
 
-        /// <summary>
-        /// 保存已经校验的像素平面和帧元数据，不复制数组。
-        /// </summary>
-        /// <param name="pixelFormat">视频内存的像素排列格式。</param>
-        /// <param name="width">视频宽度，单位为像素。</param>
-        /// <param name="height">视频高度，单位为像素。</param>
-        /// <param name="planes">按像素格式排列的平面数组，不进行深拷贝。</param>
-        /// <param name="strides">各像素平面每行的字节数。</param>
-        /// <param name="timestampMicroseconds">传递给 RTC 的微秒时间戳，默认原样传递 0。</param>
-        /// <param name="rotation">视频旋转元数据，支持 0、90、180 和 270 度，不改变像素数组。</param>
+        /// <summary>Whether the native mailbox discarded a frame before this one.</summary>
+        internal bool IsDiscontinuous { get; set; }
+
+        /// <summary>Creates a frame from validated pixel planes and metadata without copying arrays.</summary>
+        ///
+        /// <remarks>Do not modify pixel arrays during submission. SDK-owned callback buffers may be reused; call Clone before retaining a frame after its callback.</remarks>
         private XmaxVideoFrame(
             XmaxVideoPixelFormat pixelFormat,
             int width,
@@ -106,7 +84,8 @@ namespace Xmax.SDK
             byte[][] planes,
             int[] strides,
             long timestampMicroseconds,
-            XmaxVideoRotation rotation)
+            XmaxVideoRotation rotation
+        )
         {
             PixelFormat = pixelFormat;
             Width = width;
@@ -117,24 +96,17 @@ namespace Xmax.SDK
             Rotation = rotation;
         }
 
-        /// <summary>
-        /// 校验并包装 RGBA 数据，保留输入数组引用。
-        /// </summary>
-        /// <param name="data">需要处理的像素平面字节数组。</param>
-        /// <param name="width">视频宽度，单位为像素。</param>
-        /// <param name="height">视频高度，单位为像素。</param>
-        /// <param name="stride">每行字节数；小于等于零时使用宽度乘以 4 的紧凑布局。</param>
-        /// <param name="timestampMicroseconds">传递给 RTC 的微秒时间戳，默认原样传递 0。</param>
-        /// <param name="rotation">视频旋转元数据，支持 0、90、180 和 270 度，不改变像素数组。</param>
-        /// <returns>使用指定数据和元数据的视频帧。</returns>
-        /// <exception cref="XmaxException">帧尺寸、旋转、步长或像素平面容量不符合格式要求。</exception>
+        /// <summary>Validates and wraps RGBA pixels, retaining the input array.</summary>
+        ///
+        /// <remarks>Stride is in bytes; a nonpositive stride uses width times four. Timestamps are in microseconds and zero is forwarded unchanged. Rotation is metadata and does not alter pixels.</remarks>
         public static XmaxVideoFrame CreateRgba(
             byte[] data,
             int width,
             int height,
             int stride = 0,
             long timestampMicroseconds = 0,
-            XmaxVideoRotation rotation = XmaxVideoRotation.Rotation0)
+            XmaxVideoRotation rotation = XmaxVideoRotation.Rotation0
+        )
         {
             return CreatePacked(
                 XmaxVideoPixelFormat.Rgba,
@@ -143,27 +115,21 @@ namespace Xmax.SDK
                 height,
                 stride,
                 timestampMicroseconds,
-                rotation);
+                rotation
+            );
         }
 
-        /// <summary>
-        /// 校验并包装 BGRA 数据，保留输入数组引用。
-        /// </summary>
-        /// <param name="data">需要处理的像素平面字节数组。</param>
-        /// <param name="width">视频宽度，单位为像素。</param>
-        /// <param name="height">视频高度，单位为像素。</param>
-        /// <param name="stride">每行字节数；小于等于零时使用宽度乘以 4 的紧凑布局。</param>
-        /// <param name="timestampMicroseconds">传递给 RTC 的微秒时间戳，默认原样传递 0。</param>
-        /// <param name="rotation">视频旋转元数据，支持 0、90、180 和 270 度，不改变像素数组。</param>
-        /// <returns>使用指定数据和元数据的视频帧。</returns>
-        /// <exception cref="XmaxException">帧尺寸、旋转、步长或像素平面容量不符合格式要求。</exception>
+        /// <summary>Validates and wraps BGRA pixels, retaining the input array.</summary>
+        ///
+        /// <remarks>Stride is in bytes; a nonpositive stride uses width times four. Timestamps are in microseconds and zero is forwarded unchanged. Rotation is metadata and does not alter pixels.</remarks>
         public static XmaxVideoFrame CreateBgra(
             byte[] data,
             int width,
             int height,
             int stride = 0,
             long timestampMicroseconds = 0,
-            XmaxVideoRotation rotation = XmaxVideoRotation.Rotation0)
+            XmaxVideoRotation rotation = XmaxVideoRotation.Rotation0
+        )
         {
             return CreatePacked(
                 XmaxVideoPixelFormat.Bgra,
@@ -172,24 +138,13 @@ namespace Xmax.SDK
                 height,
                 stride,
                 timestampMicroseconds,
-                rotation);
+                rotation
+            );
         }
 
-        /// <summary>
-        /// 校验并包装 Y、U、V 平面，保留输入数组引用。
-        /// </summary>
-        /// <param name="y">Y 亮度平面，数组不会被复制。</param>
-        /// <param name="u">U 色度平面，宽高为亮度平面的一半，数组不会被复制。</param>
-        /// <param name="v">V 色度平面，宽高为亮度平面的一半，数组不会被复制。</param>
-        /// <param name="width">视频宽度，单位为像素。</param>
-        /// <param name="height">视频高度，单位为像素。</param>
-        /// <param name="strideY">Y 平面的每行字节数；小于等于零时使用视频宽度。</param>
-        /// <param name="strideU">U 平面的每行字节数；小于等于零时使用视频宽度的一半。</param>
-        /// <param name="strideV">V 平面的每行字节数；小于等于零时使用视频宽度的一半。</param>
-        /// <param name="timestampMicroseconds">传递给 RTC 的微秒时间戳，默认原样传递 0。</param>
-        /// <param name="rotation">视频旋转元数据，支持 0、90、180 和 270 度，不改变像素数组。</param>
-        /// <returns>使用指定平面和元数据的 I420 视频帧。</returns>
-        /// <exception cref="XmaxException">帧尺寸、旋转、步长或像素平面容量不符合格式要求。</exception>
+        /// <summary>Validates and wraps Y, U, and V pixels, retaining the input arrays.</summary>
+        ///
+        /// <remarks>Strides are in bytes; nonpositive strides use tightly packed plane rows. Timestamps are in microseconds and zero is forwarded unchanged. Rotation does not alter pixels.</remarks>
         public static XmaxVideoFrame CreateI420(
             byte[] y,
             byte[] u,
@@ -200,15 +155,37 @@ namespace Xmax.SDK
             int strideU = 0,
             int strideV = 0,
             long timestampMicroseconds = 0,
-            XmaxVideoRotation rotation = XmaxVideoRotation.Rotation0)
+            XmaxVideoRotation rotation = XmaxVideoRotation.Rotation0
+        )
         {
-            ValidateDimensions(width, height);
+            ValidateDimensions(
+                width,
+                height
+            );
             strideY = strideY <= 0 ? width : strideY;
             strideU = strideU <= 0 ? width / 2 : strideU;
             strideV = strideV <= 0 ? width / 2 : strideV;
-            ValidatePlane(y, strideY, width, height, nameof(y));
-            ValidatePlane(u, strideU, width / 2, height / 2, nameof(u));
-            ValidatePlane(v, strideV, width / 2, height / 2, nameof(v));
+            ValidatePlane(
+                y,
+                strideY,
+                width,
+                height,
+                nameof(y)
+            );
+            ValidatePlane(
+                u,
+                strideU,
+                width / 2,
+                height / 2,
+                nameof(u)
+            );
+            ValidatePlane(
+                v,
+                strideV,
+                width / 2,
+                height / 2,
+                nameof(v)
+            );
             ValidateRotation(rotation);
 
             return new XmaxVideoFrame(
@@ -218,15 +195,17 @@ namespace Xmax.SDK
                 new[] { y, u, v },
                 new[] { strideY, strideU, strideV },
                 timestampMicroseconds,
-                rotation);
+                rotation
+            );
         }
 
-        /// <summary>
-        /// 重新校验帧尺寸、旋转、平面数量、行步长和缓冲区容量。
-        /// </summary>
+        /// <summary>Validates dimensions, rotation, plane counts, row strides, and buffer lengths.</summary>
         internal void Validate()
         {
-            ValidateDimensions(Width, Height);
+            ValidateDimensions(
+                Width,
+                Height
+            );
             ValidateRotation(Rotation);
             if (PixelFormat == XmaxVideoPixelFormat.I420)
             {
@@ -234,35 +213,53 @@ namespace Xmax.SDK
                 {
                     throw new XmaxException(
                         XmaxErrorCode.InvalidConfiguration,
-                        "An I420 frame requires Y, U and V planes.");
+                        "An I420 frame requires Y, U and V planes."
+                    );
                 }
 
-                ValidatePlane(Planes[0], Strides[0], Width, Height, "Y");
-                ValidatePlane(Planes[1], Strides[1], Width / 2, Height / 2, "U");
-                ValidatePlane(Planes[2], Strides[2], Width / 2, Height / 2, "V");
+                ValidatePlane(
+                    Planes[0],
+                    Strides[0],
+                    Width,
+                    Height,
+                    "Y"
+                );
+                ValidatePlane(
+                    Planes[1],
+                    Strides[1],
+                    Width / 2,
+                    Height / 2,
+                    "U"
+                );
+                ValidatePlane(
+                    Planes[2],
+                    Strides[2],
+                    Width / 2,
+                    Height / 2,
+                    "V"
+                );
             }
             else
             {
                 if (Planes == null || Strides == null || Planes.Length < 1 || Strides.Length < 1)
                 {
-                    throw new XmaxException(XmaxErrorCode.InvalidConfiguration, "A packed frame requires one plane.");
+                    throw new XmaxException(
+                        XmaxErrorCode.InvalidConfiguration,
+                        "A packed frame requires one plane."
+                    );
                 }
 
-                ValidatePlane(Planes[0], Strides[0], (long)Width * 4, Height, "RGBA/BGRA");
+                ValidatePlane(
+                    Planes[0],
+                    Strides[0],
+                    (long)Width * 4,
+                    Height,
+                    "RGBA/BGRA"
+                );
             }
         }
 
-        /// <summary>
-        /// 校验并包装每像素四字节的交错像素数据。
-        /// </summary>
-        /// <param name="format">视频内存的像素排列格式。</param>
-        /// <param name="data">需要处理的像素平面字节数组。</param>
-        /// <param name="width">视频宽度，单位为像素。</param>
-        /// <param name="height">视频高度，单位为像素。</param>
-        /// <param name="stride">每行字节数；小于等于零时使用宽度乘以 4 的紧凑布局。</param>
-        /// <param name="timestampMicroseconds">传递给 RTC 的微秒时间戳，默认原样传递 0。</param>
-        /// <param name="rotation">视频旋转元数据，支持 0、90、180 和 270 度，不改变像素数组。</param>
-        /// <returns>引用原始像素数组的 RGBA 或 BGRA 帧。</returns>
+        /// <summary>Validates and wraps four-byte packed pixels without copying the input array.</summary>
         private static XmaxVideoFrame CreatePacked(
             XmaxVideoPixelFormat format,
             byte[] data,
@@ -270,14 +267,27 @@ namespace Xmax.SDK
             int height,
             int stride,
             long timestampMicroseconds,
-            XmaxVideoRotation rotation)
+            XmaxVideoRotation rotation
+        )
         {
-            ValidateDimensions(width, height);
+            ValidateDimensions(
+                width,
+                height
+            );
             if ((long)width * 4 > int.MaxValue)
-                throw new XmaxException(XmaxErrorCode.InvalidConfiguration, "Video row is too large.");
+                throw new XmaxException(
+                    XmaxErrorCode.InvalidConfiguration,
+                    "Video row is too large."
+                );
 
             stride = stride <= 0 ? width * 4 : stride;
-            ValidatePlane(data, stride, (long)width * 4, height, nameof(data));
+            ValidatePlane(
+                data,
+                stride,
+                (long)width * 4,
+                height,
+                nameof(data)
+            );
             ValidateRotation(rotation);
 
             return new XmaxVideoFrame(
@@ -287,29 +297,26 @@ namespace Xmax.SDK
                 new[] { data },
                 new[] { stride },
                 timestampMicroseconds,
-                rotation);
+                rotation
+            );
         }
 
-        /// <summary>
-        /// 校验视频宽高为正偶数。
-        /// </summary>
-        /// <param name="width">视频宽度，单位为像素。</param>
-        /// <param name="height">视频高度，单位为像素。</param>
-        private static void ValidateDimensions(int width, int height)
+        /// <summary>Requires positive even video dimensions.</summary>
+        private static void ValidateDimensions(
+            int width,
+            int height
+        )
         {
             if (width <= 0 || height <= 0 || width % 2 != 0 || height % 2 != 0)
             {
                 throw new XmaxException(
                     XmaxErrorCode.InvalidConfiguration,
-                    "Video frame width and height must be positive even numbers.");
+                    "Video frame width and height must be positive even numbers."
+                );
             }
         }
 
-        /// <summary>
-        /// 校验后深拷贝全部像素平面和行步长，供回调结束后保留。
-        /// </summary>
-        /// <returns>不与原帧共享像素和步长数组的副本。</returns>
-        /// <exception cref="XmaxException">帧尺寸、旋转、步长或像素平面容量不符合格式要求。</exception>
+        /// <summary>Creates a deep copy of the frame planes and strides for retention beyond a callback.</summary>
         public XmaxVideoFrame Clone()
         {
             Validate();
@@ -325,40 +332,46 @@ namespace Xmax.SDK
                 planes,
                 (int[])Strides.Clone(),
                 TimestampMicroseconds,
-                Rotation);
+                Rotation
+            )
+            {
+                IsDiscontinuous = IsDiscontinuous
+            };
         }
 
-        /// <summary>
-        /// 按行步长和高度校验像素平面容量，并使用长整数防止长度溢出。
-        /// </summary>
-        /// <param name="data">需要处理的像素平面字节数组。</param>
-        /// <param name="stride">源像素平面实际每行字节数，须不小于有效像素字节数。</param>
-        /// <param name="rowBytes">每行有效像素所需的最少字节数。</param>
-        /// <param name="height">视频高度，单位为像素。</param>
-        /// <param name="name">用于错误说明的像素平面名称。</param>
-        private static void ValidatePlane(byte[] data, int stride, long rowBytes, int height, string name)
+        /// <summary>Requires a row stride and byte length sufficient for the complete plane layout.</summary>
+        private static void ValidatePlane(
+            byte[] data,
+            int stride,
+            long rowBytes,
+            int height,
+            string name
+        )
         {
             var minimumLength = (long)stride * height;
             if (stride < rowBytes || minimumLength > int.MaxValue || data == null || data.Length < minimumLength)
             {
                 throw new XmaxException(
                     XmaxErrorCode.InvalidConfiguration,
-                    $"Video plane {name} is missing or smaller than {minimumLength} bytes.");
+                    $"Video plane {name} is missing or smaller than {minimumLength} bytes."
+                );
             }
         }
 
-        /// <summary>
-        /// 校验旋转角度为 0、90、180 或 270 度。
-        /// </summary>
-        /// <param name="rotation">视频旋转元数据，支持 0、90、180 和 270 度，不改变像素数组。</param>
-        private static void ValidateRotation(XmaxVideoRotation rotation)
+        /// <summary>Requires one of the supported clockwise rotation values.</summary>
+        private static void ValidateRotation(
+            XmaxVideoRotation rotation
+        )
         {
             if (rotation != XmaxVideoRotation.Rotation0 &&
                 rotation != XmaxVideoRotation.Rotation90 &&
                 rotation != XmaxVideoRotation.Rotation180 &&
                 rotation != XmaxVideoRotation.Rotation270)
             {
-                throw new XmaxException(XmaxErrorCode.InvalidConfiguration, $"Unsupported video rotation: {rotation}.");
+                throw new XmaxException(
+                    XmaxErrorCode.InvalidConfiguration,
+                    $"Unsupported video rotation: {rotation}."
+                );
             }
         }
     }

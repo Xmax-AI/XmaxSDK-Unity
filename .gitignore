@@ -30,3 +30,7 @@
 
 # Crash and diagnostic files
 sysinfo.txt
+
+# Internal development documentation
+/docs/
+/docs.meta

@@ -1,42 +1,87 @@
-using bytertc;
+//
+//  RtcQualityConverter.cs
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/XingMai/XmaxSDK-Unity
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
+using Agora.Rtc;
 
 namespace Xmax.SDK
 {
+
     /// <summary>
-    /// 将厂商网络统计映射到 RTC 适配层，未知枚举保留为 Unknown。
+    /// Converts Agora network quality ratings and actual video measurements into SDK values.
     /// </summary>
     internal static class RtcQualityConverter
     {
-        /// <summary>
-        /// 提取厂商本地统计中的上下行等级及网络指标。
-        /// </summary>
-        /// <param name="local">厂商提供的本地上下行网络统计。</param>
-        /// <returns>与厂商类型隔离的网络质量快照。</returns>
-        internal static RtcNetworkQuality Convert(NetworkQualityStats local) => new RtcNetworkQuality(
-            Level(local.tx_quality), Level(local.rx_quality), local.fraction_lost, local.rtt, local.total_bandwidth);
 
         /// <summary>
-        /// 映射已知厂商网络等级，无法识别的值回退为 Unknown。
+        /// Maps documented quality values, including a disconnected link.
         /// </summary>
-        /// <param name="quality">厂商定义的网络质量枚举值。</param>
-        /// <returns>RTC 适配层网络等级。</returns>
-        private static RtcQualityLevel Level(NetworkQuality quality)
-        {
-            switch (quality)
-            {
-                case NetworkQuality.kNetworkQualityExcellent:
-                    return RtcQualityLevel.Excellent;
-                case NetworkQuality.kNetworkQualityGood:
-                    return RtcQualityLevel.Good;
-                case NetworkQuality.kNetworkQualityPoor:
-                    return RtcQualityLevel.Poor;
-                case NetworkQuality.kNetworkQualityBad:
-                    return RtcQualityLevel.Bad;
-                case NetworkQuality.kNetworkQualityVbad:
-                    return RtcQualityLevel.VeryBad;
-                default:
-                    return RtcQualityLevel.Unknown;
-            }
-        }
+        internal static RtcQualityLevel Level(
+            int quality
+        ) => quality >= 1 && quality <= 6
+            ? (RtcQualityLevel)quality : RtcQualityLevel.Unknown;
+
+        /// <summary>
+        /// Creates a directional quality update; unavailable measurements remain zero.
+        /// </summary>
+        internal static RtcNetworkQuality Convert(
+            int uplink,
+            int downlink
+        ) =>
+            new RtcNetworkQuality(
+                Level(uplink),
+                Level(downlink),
+                0,
+                0,
+                0
+            );
+
+        /// <summary>Copies actual uplink measurements, preserving unavailable values as null.</summary>
+        internal static UplinkVideoStatistics UplinkVideoStatistics(
+            LocalVideoStats stats
+        ) => new UplinkVideoStatistics(
+            Positive(stats.encodedFrameWidth),
+            Positive(stats.encodedFrameHeight),
+            Nonnegative(stats.captureFrameRate),
+            Nonnegative(stats.encoderOutputFrameRate),
+            Nonnegative(stats.sentFrameRate),
+            Nonnegative(stats.sentBitrate),
+            Percent(stats.txPacketLossRate)
+        );
+
+        /// <summary>Copies actual downlink measurements without substituting a configured target.</summary>
+        internal static DownlinkVideoStatistics DownlinkVideoStatistics(
+            RemoteVideoStats stats
+        ) => new DownlinkVideoStatistics(
+            null,
+            Positive(stats.width),
+            Positive(stats.height),
+            Nonnegative(stats.decoderOutputFrameRate),
+            Nonnegative(stats.rendererOutputFrameRate),
+            Nonnegative(stats.receivedBitrate),
+            Percent(stats.packetLossRate),
+            Nonnegative(stats.e2eDelay)
+        );
+
+        /// <summary>Returns a positive dimension, or null if unavailable.</summary>
+        private static int? Positive(
+            int value
+        ) => value > 0 ? value : (int?)null;
+
+        /// <summary>Returns a nonnegative measurement, or null if unavailable.</summary>
+        private static int? Nonnegative(
+            int value
+        ) => value >= 0 ? value : (int?)null;
+
+        /// <summary>Returns a valid packet-loss percentage.</summary>
+        private static int? Percent(
+            int value
+        ) => value >= 0 && value <= 100 ? value : (int?)null;
     }
 }

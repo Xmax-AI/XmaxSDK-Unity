@@ -1,86 +1,129 @@
+//
+//  IRtcManager.cs
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/XingMai/XmaxSDK-Unity
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 using System;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace Xmax.SDK
 {
+
     /// <summary>
-    /// 隔离厂商 RTC 类型的传输接口，只负责入房、主流视频和消息传输。
+    /// The vendor-neutral room, video, and signaling transport interface.
     /// </summary>
     internal interface IRtcManager
     {
+
         /// <summary>
-        /// 入房等待之外的引擎或房间致命错误。
+        /// Occurs when an active connection encounters an unrecoverable background failure.
         /// </summary>
         event Action<XmaxException> FatalError;
 
         /// <summary>
-        /// 当前房间的本地网络质量统计更新。
+        /// Occurs when the active connection's directional network ratings change.
         /// </summary>
         event Action<RtcNetworkQuality> NetworkQualityChanged;
 
+        /// <summary>Occurs for copied measurements of the current local video stream.</summary>
+        event Action<UplinkVideoStatistics> UplinkVideoStatisticsChanged;
+
+        /// <summary>Occurs for copied measurements of a resolved remote account.</summary>
+        event Action<DownlinkVideoStatistics> DownlinkVideoStatisticsChanged;
+
+        /// <summary>Occurs when native encoding becomes limited or recovers.</summary>
+        event Action<RtcPerformanceAlarm> PerformanceAlarm;
+
         /// <summary>
-        /// 当前房间的远端用户发布包含视频的流时触发。
+        /// Occurs when a remote user publishes video in the current room.
         /// </summary>
         event Action<RemoteStream> VideoPublished;
 
         /// <summary>
-        /// 当前房间的远端用户取消发布视频时触发。
+        /// Occurs when a remote user stops publishing video in the current room.
         /// </summary>
         event Action<RemoteStream> VideoUnpublished;
 
         /// <summary>
-        /// 当前房间主流收到 SEI 数据时触发。
-        /// </summary>
-        event Action<RemoteStream, byte[]> SeiReceived;
-
-        /// <summary>
-        /// 当前房间远端主流收到可转换的 I420 帧时触发。
+        /// Occurs for an eligible video frame. Clone frames retained beyond the callback.
         /// </summary>
         event Action<RemoteStream, XmaxVideoFrame> FrameReceived;
 
         /// <summary>
-        /// 校验当前运行平台支持原生 RTC；目前仅支持 Android Player。
+        /// Rejects RTC startup outside Android Player before any server session is created.
         /// </summary>
         void ValidatePlatform();
 
-        /// <summary>
-        /// 获取独占引擎租约并加入 RTC 房间，成功后发布外部视频；失败或取消时释放资源。
-        /// </summary>
-        /// <param name="info">经过校验的 RTC 应用、房间、用户及入房令牌。</param>
-        /// <param name="configuration">已校验并解析码率范围的完整视频编码参数。</param>
-        /// <param name="cancellationToken">调用方取消令牌；取消后停止等待或撤销当前操作。</param>
-        /// <returns>房间加入完成并已请求发布视频的任务。</returns>
-        Task JoinAsync(RtcJoinInfo info, VideoEncodingConfiguration configuration, CancellationToken cancellationToken);
+        /// <summary>Acquires and initializes the exclusive engine before an online session is created.</summary>
+        ///
+        /// <remarks>Local preview outside Android Player leaves native RTC unloaded.</remarks>
+        Task InitializeAsync(
+            CancellationToken cancellationToken
+        );
+
+        /// <summary>Leaves the room and releases the engine and its exclusive lease.</summary>
+        Task DestroyAsync();
 
         /// <summary>
-        /// 取消入房等待，解除回调并尽力销毁房间、引擎和独占租约。
+        /// Joins a room using the initialized engine before external video publication.
         /// </summary>
-        /// <returns>本地 RTC 资源清理流程已结束的任务。</returns>
+        Task JoinAsync(
+            RoomJoinConfiguration info,
+            VideoEncodingConfiguration configuration,
+            CancellationToken cancellationToken
+        );
+
+        /// <summary>
+        /// Invalidates room callbacks and cancels signaling while retaining the engine for local media.
+        /// </summary>
         Task LeaveAsync();
 
-        /// <summary>
-        /// 为当前房间的指定远端用户设置 I420 视频接收并订阅主流。
-        /// </summary>
-        /// <param name="key">由房间和用户共同标识的远端主流。</param>
-        void SubscribeVideo(RemoteStream key);
+        /// <summary>Requests external video publication after successful room join.</summary>
+        void PublishLocalVideo();
 
         /// <summary>
-        /// 校验并向已加入房间的原生引擎推送外部视频帧。
+        /// Subscribes to the named remote user's video in the current room.
         /// </summary>
-        /// <param name="frame">需要处理的视频帧；调用期间不得修改其像素平面和行步长。</param>
-        void PushFrame(XmaxVideoFrame frame);
+        void SubscribeVideo(
+            RemoteStream key
+        );
 
         /// <summary>
-        /// 向当前 RTC 房间发送业务消息，负返回值转换为 SDK 错误。
+        /// Submits an external frame to the joined RTC room.
         /// </summary>
-        /// <param name="message">按房间协议编码的业务消息文本。</param>
-        void SendRoomMessage(string message);
+        void PushFrame(
+            XmaxVideoFrame frame
+        );
 
         /// <summary>
-        /// 向当前主流发送 SEI 数据，原生调用失败时抛出 SDK 错误。
+        /// Submits an ordered room message, completing after all native packets have been sent.
         /// </summary>
-        /// <param name="data">用于传输或匹配的 SEI 字节数据。</param>
-        void SendSei(byte[] data);
+        ///
+        /// <remarks>Cancellation stops waiting without cancelling admitted packets; leaving the room cancels the queue.</remarks>
+        Task SendRoomMessageAsync(
+            string message,
+            CancellationToken cancellationToken = default,
+            string replacingPendingMessage = null,
+            bool reportFailure = true
+        );
+
+        /// <summary>
+        /// Discards queued trajectories without dropping control messages.
+        /// </summary>
+        void DiscardPendingTracks();
+
+        /// <summary>
+        /// Applies a validated uplink encoding configuration.
+        /// </summary>
+        void ConfigureVideoEncoding(
+            VideoEncodingConfiguration configuration
+        );
+
     }
 }

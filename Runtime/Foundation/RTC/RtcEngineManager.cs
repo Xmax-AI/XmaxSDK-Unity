@@ -1,22 +1,50 @@
+//
+//  RtcEngineManager.cs
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/XingMai/XmaxSDK-Unity
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 using System;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace Xmax.SDK
 {
+
     /// <summary>
-    /// 以全局独占租约保护厂商 RTC 引擎的单实例约束。
+    /// Defines the Agora application and guards its process-wide engine with an exclusive lease.
     /// </summary>
     internal static class RtcEngineManager
     {
-        private static readonly SemaphoreSlim Gate = new SemaphoreSlim(1, 1);
 
         /// <summary>
-        /// 可取消地等待全局引擎使用权。
+        /// The Agora application identifier used by Xmax realtime sessions.
         /// </summary>
-        /// <param name="cancellationToken">调用方取消令牌；取消后停止等待或撤销当前操作。</param>
-        /// <returns>必须在引擎释放后 Dispose 的独占租约。</returns>
-        internal static async Task<IDisposable> AcquireAsync(CancellationToken cancellationToken)
+        internal const string DefaultAppId = "5588dfe2e7874bd08ea28f4968ec2d40";
+
+        /// <summary>Creates the native platform while the caller holds the exclusive engine lease.</summary>
+        internal static IRtcPlatform CreatePlatform() => new AgoraRtcPlatform();
+
+        /// <summary>
+        /// The process-wide gate allowing one active RTC engine.
+        /// </summary>
+        private static readonly SemaphoreSlim Gate = new SemaphoreSlim(
+            1,
+            1
+        );
+
+        /// <summary>
+        /// Waits for exclusive engine ownership until acquired or canceled.
+        /// </summary>
+        ///
+        /// <returns>A lease that must be disposed after releasing the native engine.</returns>
+        internal static async Task<IDisposable> AcquireAsync(
+            CancellationToken cancellationToken
+        )
         {
             await Gate.WaitAsync(cancellationToken);
 
@@ -24,18 +52,25 @@ namespace Xmax.SDK
         }
 
         /// <summary>
-        /// 持有全局 RTC 引擎使用权的一次性租约。
+        /// Holds engine ownership until its first disposal.
         /// </summary>
         private sealed class Lease : IDisposable
         {
+
+            /// <summary>
+            /// Whether the lease has already returned engine ownership.
+            /// </summary>
             private int _released;
 
             /// <summary>
-            /// 仅在首次释放时归还全局引擎使用权。
+            /// Returns engine ownership once, ignoring repeated disposal.
             /// </summary>
             public void Dispose()
             {
-                if (Interlocked.Exchange(ref _released, 1) == 0)
+                if (Interlocked.Exchange(
+                    ref _released,
+                    1
+                ) == 0)
                     Gate.Release();
             }
         }

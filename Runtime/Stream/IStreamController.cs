@@ -1,3 +1,13 @@
+//
+//  IStreamController.cs
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/XingMai/XmaxSDK-Unity
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 using System;
 using System.Collections.Generic;
 using System.Threading;
@@ -5,83 +15,153 @@ using System.Threading.Tasks;
 
 namespace Xmax.SDK
 {
+
     /// <summary>
-    /// 管理实时房间协议、任务确认和视频传输的内部接口。
+    /// The room signaling, result confirmation, and media transport coordinator.
     /// </summary>
     internal interface IStreamController
     {
+
+        /// <summary>The connection's transport quality policies and history owner.</summary>
+        IQualityController QualityController { get; }
+
         /// <summary>
-        /// 有效连接中的传输、任务确认或后台循环发生致命失败时触发。
+        /// Occurs when an active connection encounters an unrecoverable background failure.
         /// </summary>
         event Action<XmaxException> FatalError;
 
         /// <summary>
-        /// 当前有效连接的公开网络质量统计更新。
+        /// Occurs when the active connection's directional network ratings change.
         /// </summary>
         event Action<RealtimeNetworkQuality> NetworkQualityChanged;
 
+        /// <summary>Occurs before public quality delivery with the sample's monotonic time in seconds.</summary>
+        event Action<RealtimeNetworkQuality, double> NetworkQualitySampled;
+
         /// <summary>
-        /// 收到已通过当前任务 SEI 确认的远端视频帧时触发。
+        /// Occurs for an eligible video frame. Clone frames retained beyond the callback.
         /// </summary>
         event Action<XmaxVideoFrame> FrameReceived;
 
+        /// <summary>Occurs when the confirmed remote stream changes; null invalidates its frames and waits.</summary>
+        event Action<RemoteStream?> RemoteStreamChanged;
+
         /// <summary>
-        /// 在创建在线会话前校验底层 RTC 的运行平台。
+        /// Rejects RTC startup outside Android Player before any server session is created.
         /// </summary>
         void ValidatePlatform();
 
-        /// <summary>
-        /// 加入 RTC 房间并启动房间心跳，失败或取消时清理本次连接。
-        /// </summary>
-        /// <param name="info">经过校验的 RTC 应用、房间、用户及入房令牌。</param>
-        /// <param name="format">本地视频编码格式，宽高须为正偶数且帧率大于零。</param>
-        /// <param name="cancellationToken">调用方取消令牌；取消后停止等待或撤销当前操作。</param>
-        /// <returns>入房成功且心跳已启动的任务。</returns>
-        Task ConnectAsync(RtcJoinInfo info, RealtimeVideoFormat format, CancellationToken cancellationToken);
+        /// <summary>Prepares the exclusive RTC engine before local source startup or session creation.</summary>
+        Task InitializeAsync(
+            CancellationToken cancellationToken
+        );
+
+        /// <summary>Releases the RTC engine after local media and connection shutdown; safe to repeat.</summary>
+        Task ReleaseAsync();
 
         /// <summary>
-        /// 停止房间心跳和生成后台循环，再退出 RTC 房间。
+        /// Joins the prepared session's RTC room and enables external video publication.
+        /// Failure or cancellation rolls back the room while preserving local media and the engine.
         /// </summary>
-        /// <returns>全部房间循环和 RTC 清理已结束的任务。</returns>
+        ///
+        /// <remarks>
+        /// Core creates the server session and owns its rollback. Online RTC is supported only in Android Player.
+        /// </remarks>
+        Task ConnectAsync(
+            RoomJoinConfiguration info,
+            RealtimeVideoFormat format,
+            CancellationToken cancellationToken
+        );
+
+        /// <summary>
+        /// Stops generation and leaves the RTC room while retaining the engine for local media.
+        /// Core closes the associated server session.
+        /// </summary>
         Task DisconnectAsync();
 
         /// <summary>
-        /// 发送启动信令并周期发送任务 SEI，等待远端匹配确认，失败时停止本次生成。
+        /// Sends start signaling and confirms a matching published result stream; first-frame readiness is
+        /// awaited by rendering.
         /// </summary>
-        /// <param name="context">已经由上层解析的非空生成条件。</param>
-        /// <param name="format">本地视频编码格式，宽高须为正偶数且帧率大于零。</param>
-        /// <param name="cancellationToken">调用方取消令牌；取消后停止等待或撤销当前操作。</param>
-        /// <returns>远端 SEI 已确认的任务标识；首帧就绪由渲染层另行等待。</returns>
-        Task<string> StartGenerationAsync(
+        ///
+        /// <remarks>
+        /// The first generation requires conditions. Null reuses the last successful conditions. Updating an
+        /// active generation retains its task. Newer public generation requests replace unfinished requests.
+        /// Startup failure or caller cancellation releases the connection; cancelling a condition update
+        /// preserves the existing generation.
+        /// </remarks>
+        Task StartGenerationAsync(
+            string taskId,
             RealtimeContext context,
             RealtimeVideoFormat format,
-            CancellationToken cancellationToken);
+            CancellationToken cancellationToken,
+            bool faceRestoration = false
+        );
 
         /// <summary>
-        /// 校验任务归属后发送生成条件更新信令。
+        /// Submits conditions for the existing generation task without restarting it.
         /// </summary>
-        /// <param name="context">已经由上层解析的非空生成条件。</param>
-        /// <param name="format">本地视频编码格式，宽高须为正偶数且帧率大于零。</param>
-        /// <param name="taskId">本次生成任务的唯一标识，用于校验任务归属。</param>
-        void ChangeGenerationCondition(RealtimeContext context, RealtimeVideoFormat format, string taskId);
+        ///
+        /// <remarks>
+        /// Completes when admitted to the signaling queue. Native send failures trigger connection cleanup.
+        /// Cancellation or submission rejection preserves generation; admitted packets continue sending.
+        /// </remarks>
+        Task ChangeGenerationConditionAsync(
+            RealtimeContext context,
+            RealtimeVideoFormat format,
+            string taskId,
+            CancellationToken cancellationToken,
+            bool faceRestoration = false
+        );
 
         /// <summary>
-        /// 使任务和匹配流失效，停止 SEI 循环并尽力发送停止信令。
+        /// Invalidates the current generation and submits its stop signal while keeping the RTC room.
         /// </summary>
-        /// <returns>生成后台循环和停止信令处理已结束的任务。</returns>
         Task StopGenerationAsync();
 
         /// <summary>
-        /// 将本地外部帧交给 RTC 传输层。
+        /// Submits an external frame while a generation task exists, including startup; ignores frames otherwise.
         /// </summary>
-        /// <param name="frame">需要处理的视频帧；调用期间不得修改其像素平面和行步长。</param>
-        void PushFrame(XmaxVideoFrame frame);
+        void PushFrame(
+            XmaxVideoFrame frame
+        );
 
         /// <summary>
-        /// 校验当前任务标识后发送交互轨迹消息。
+        /// Submits normalized full-media coordinates for the active generation.
         /// </summary>
-        /// <param name="tracks">以编码画面左上角为原点的交互点序列，坐标须位于画面内。</param>
-        /// <param name="taskId">本次生成任务的唯一标识，用于校验任务归属。</param>
-        void SendTracks(IReadOnlyList<XmaxTrackPoint> tracks, string taskId);
+        ///
+        /// <remarks>
+        /// Coordinates range from top-left (0, 0) to bottom-right (1, 1).
+        /// Transport quality changes do not change this coordinate space.
+        /// </remarks>
+        void SendTracks(
+            IReadOnlyList<RealtimePoint> tracks,
+            string taskId
+        );
+
+        /// <summary>
+        /// Sets the media baseline, generation canvas, and initial return format.
+        /// </summary>
+        void ConfigureMedia(
+            RealtimeVideoFormat baseline,
+            RealtimeVideoFormat generation,
+            RealtimeVideoFormat target
+        );
+
+        /// <summary>
+        /// Applies the local uplink encoder format.
+        /// </summary>
+        void ConfigureVideoEncoding(
+            RealtimeVideoFormat format
+        );
+
+        /// <summary>
+        /// Submits new return dimensions for the current generation task.
+        /// </summary>
+        Task ChangeTargetSizeAsync(
+            string taskId,
+            RealtimeVideoFormat format,
+            CancellationToken cancellationToken
+        );
     }
 }

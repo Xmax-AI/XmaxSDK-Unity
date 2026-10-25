@@ -1,95 +1,148 @@
+//
+//  RenderController.cs
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/XingMai/XmaxSDK-Unity
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 using System;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace Xmax.SDK
 {
+
     /// <summary>
-    /// 管理远端轨道、首帧就绪信号和回调版本，避免分发过期画面。
+    /// Owns remote track binding and rejects frames and waits invalidated by rendering resets.
     /// </summary>
-    internal sealed class RenderController
+    internal sealed class RenderController : IRenderController
     {
-        // 当前绑定的远端轨道。
+
+        /// <summary>The copied remote packet queue, separate from Unity-thread rendering.</summary>
+        private readonly RealtimeMediaFrameDispatcher _dispatcher = new RealtimeMediaFrameDispatcher();
+
+        /// <summary>The currently bound remote track, or null after a complete reset.</summary>
         private RealtimeVideoTrack _track;
 
-        // 本轮生成的首帧信号与通知版本。
+        /// <summary>The confirmed published source, or null while no remote video is bound.</summary>
+        private RemoteStream? _remoteStream;
+
+        /// <summary>Whether a generation owns rendering, including its wait for publication.</summary>
+        private bool _generationActive;
+
+        /// <summary>The current generation's first-frame completion signal.</summary>
         private TaskCompletionSource<bool> _ready;
+
+        /// <summary>The revision rejecting stale or reentrant frame delivery.</summary>
         private long _revision;
 
-        /// <summary>
-        /// 当前生成最近收到的帧引用；未就绪或已重置时为 null，长期保留需 Clone。
-        /// </summary>
-        internal XmaxVideoFrame LatestFrame { get; private set; }
+        /// <inheritdoc/>
+        public XmaxVideoFrame LatestFrame { get; private set; }
 
-        /// <summary>
-        /// 当前生成收到有效远端帧时触发。
-        /// </summary>
-        internal event Action<XmaxVideoFrame> FrameReceived;
+        /// <inheritdoc/>
+        public event Action<XmaxVideoFrame> FrameReceived;
 
-        /// <summary>
-        /// 重置旧渲染状态并绑定新的远端轨道。
-        /// </summary>
-        /// <param name="track">需要绑定的视频轨道；null 表示解除轨道输入。</param>
-        internal void Bind(RealtimeVideoTrack track)
+        /// <inheritdoc/>
+        public void SetRemoteMediaFrameListener(
+            Action<RealtimeMediaFrame> listener
+        ) => _dispatcher.SetListener(listener);
+
+        /// <inheritdoc/>
+        public void Bind(
+            RealtimeVideoTrack track
+        )
         {
             Reset();
             _track = track;
         }
 
-        /// <summary>
-        /// 清除上一轮画面并建立本轮首帧等待信号。
-        /// </summary>
-        internal void BeginGeneration()
+        /// <inheritdoc/>
+        public void BeginGeneration()
         {
             ResetGeneration();
+            _generationActive = true;
             _ready = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         }
 
-        /// <summary>
-        /// 等待本轮生成的第一帧，支持超时和调用方取消。
-        /// </summary>
-        /// <param name="cancellationToken">调用方取消令牌；取消后停止等待或撤销当前操作。</param>
-        /// <param name="timeout">等待首帧的时限，单位为毫秒。</param>
-        /// <returns>收到有效首帧后完成的任务。</returns>
-        internal async Task WaitUntilRemoteFrameReadyAsync(CancellationToken cancellationToken, int timeout = 10000)
+        /// <inheritdoc/>
+        public void SetRemoteStream(
+            RemoteStream? stream
+        )
         {
-            var ready = _ready ?? throw new XmaxException(XmaxErrorCode.RtcError, "Remote rendering is not active.");
-            await AsyncDeadline.WaitAsync(ready.Task, timeout, cancellationToken);
+            if (!_generationActive || Nullable.Equals(_remoteStream, stream))
+                return;
+
+            _remoteStream = stream;
+            InvalidateFrames();
+            _ready = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _dispatcher.SetStream(stream.HasValue);
         }
 
-        /// <summary>
-        /// 校验当前帧并完成首帧信号，再向仍有效的轨道和订阅者分发。
-        /// </summary>
-        /// <param name="frame">需要处理的视频帧；调用期间不得修改其像素平面和行步长。</param>
-        internal void Receive(XmaxVideoFrame frame)
+        /// <inheritdoc/>
+        public async Task WaitUntilRemoteFrameReadyAsync(
+            CancellationToken cancellationToken,
+            int timeout = 10000
+        )
         {
-            if (_track == null || _ready == null)
+            var ready = _ready ?? throw new XmaxException(
+                XmaxErrorCode.RtcError,
+                "Remote rendering is not active."
+            );
+            await AsyncDeadline.WaitAsync(
+                ready.Task,
+                timeout,
+                cancellationToken
+            );
+        }
+
+        /// <inheritdoc/>
+        public void Receive(
+            XmaxVideoFrame frame
+        )
+        {
+            if (_track == null || !_remoteStream.HasValue || _ready == null)
                 return;
 
             frame.Validate();
             var revision = _revision;
             LatestFrame = frame;
+            _dispatcher.Dispatch(frame);
             _ready.TrySetResult(true);
-            _track.RaiseFrame(frame, () => revision == _revision);
+            _track.RaiseFrame(
+                frame,
+                () => revision == _revision
+            );
             if (revision == _revision)
-                EventDispatch.Raise(FrameReceived, frame, () => revision == _revision);
+                EventDispatch.Raise(
+                    FrameReceived,
+                    frame,
+                    () => revision == _revision
+                );
         }
 
-        /// <summary>
-        /// 使当前帧通知失效，取消首帧等待并清除最近帧。
-        /// </summary>
-        internal void ResetGeneration()
+        /// <inheritdoc/>
+        public void ResetGeneration()
+        {
+            _generationActive = false;
+            _remoteStream = null;
+            InvalidateFrames();
+        }
+
+        /// <summary>Clears cached and queued frames and invalidates waits for the retired source.</summary>
+        private void InvalidateFrames()
         {
             _revision++;
+            _dispatcher.SetStream(false);
             _ready?.TrySetCanceled();
             _ready = null;
             LatestFrame = null;
         }
 
-        /// <summary>
-        /// 重置生成渲染状态并解除轨道绑定。
-        /// </summary>
-        internal void Reset()
+        /// <inheritdoc/>
+        public void Reset()
         {
             ResetGeneration();
             _track = null;

@@ -1,0 +1,4 @@
+<linker>
+  <!-- Agora's JSON bridge accesses RTC parameter fields and callback types through reflection. -->
+  <assembly fullname="AgoraRtcSDK" preserve="all" />
+</linker>

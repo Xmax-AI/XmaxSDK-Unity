@@ -1,48 +1,121 @@
+//
+//  ApiLogger.cs
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/XingMai/XmaxSDK-Unity
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 using System;
 
 namespace Xmax.SDK
 {
-    /// <summary>
-    /// 仅记录 HTTP 方法、脱敏路由和数值统计，避免输出请求与响应正文。
-    /// </summary>
+
+    /// <summary>Logs API metadata and failed response contents without authentication fields.</summary>
     internal static class ApiLogger
     {
-        /// <summary>
-        /// 记录请求完成后的状态码、响应字节数和耗时。
-        /// </summary>
-        /// <param name="method">HTTP 方法，例如 POST、PUT 或 DELETE。</param>
-        /// <param name="path">相对于 API 根地址的请求路径。</param>
-        /// <param name="status">HTTP 响应状态码。</param>
-        /// <param name="bytes">收到的响应字节数。</param>
-        /// <param name="milliseconds">等待时限，单位为毫秒。</param>
-        internal static void Response(string method, string path, long status, long bytes, long milliseconds)
-            => XmaxLogger.Api.Info(() => $"{method} {Route(path)} status={status} duration={milliseconds}ms bytes={bytes}");
 
-        /// <summary>
-        /// 记录请求失败的脱敏路由、异常分类和耗时。
-        /// </summary>
-        /// <param name="method">HTTP 方法，例如 POST、PUT 或 DELETE。</param>
-        /// <param name="path">相对于 API 根地址的请求路径。</param>
-        /// <param name="exception">需要处理的原始异常。</param>
-        /// <param name="milliseconds">等待时限，单位为毫秒。</param>
-        internal static void Failure(string method, string path, Exception exception, long milliseconds)
-            => XmaxLogger.Api.Error(() => $"{method} {Route(path)} failed={XmaxLogger.ErrorCode(exception)} duration={milliseconds}ms");
-
-        /// <summary>
-        /// 移除查询参数并将会话标识替换为路由占位符。
-        /// </summary>
-        /// <param name="path">相对于 API 根地址的请求路径。</param>
-        /// <returns>固定或脱敏后的路由名称，未知路由返回占位文本。</returns>
-        private static string Route(string path)
+        /// <summary>Logs response status and elapsed time; failed responses include a redacted body.</summary>
+        internal static void Response(
+            string method,
+            string path,
+            long status,
+            long bytes,
+            long milliseconds,
+            bool successful = true,
+            string responseBody = null
+        )
         {
-            // 只输出已知路由模板，避免带出会话标识或查询参数。
+            if (successful)
+                XmaxLogger.Api.Debug(() => ResponseMessage(
+                        method,
+                        path,
+                        status,
+                        bytes,
+                        milliseconds,
+                        null
+                    ));
+            else
+                XmaxLogger.Api.Error(() => ResponseMessage(
+                        method,
+                        path,
+                        status,
+                        bytes,
+                        milliseconds,
+                        responseBody
+                    ));
+        }
+
+        /// <summary>Logs a failure before a complete HTTP response is available.</summary>
+        internal static void Failure(
+            string method,
+            string path,
+            Exception exception,
+            long milliseconds
+        )
+            => XmaxLogger.Api.Error(() => method + " " + Route(path) + " 失败 (Request Failed)\n"
+                + "├─ " + XmaxLogger.Localized(
+                    "耗时：",
+                    "Duration: "
+                ) + milliseconds + " ms\n"
+                + "└─ " + XmaxLogger.Localized(
+                    "原因：",
+                    "Reason: "
+                ) + ErrorMessageFormatter.Format(exception));
+
+        /// <summary>Formats status, duration, response size, and an optional failed response body.</summary>
+        private static string ResponseMessage(
+            string method,
+            string path,
+            long status,
+            long bytes,
+            long milliseconds,
+            string body
+        )
+        {
+            var prefix = method + " " + Route(path) + "\n"
+                + "├─ " + XmaxLogger.Localized(
+                    "状态：",
+                    "Status: "
+                ) + status + "\n"
+                + "├─ " + XmaxLogger.Localized(
+                    "耗时：",
+                    "Duration: "
+                ) + milliseconds + " ms\n";
+            var size = XmaxLogger.Localized(
+                "响应：",
+                "Response Size: "
+            ) + bytes + " bytes";
+            return body == null ? prefix + "└─ " + size : prefix + "├─ " + size + "\n└─ "
+                + XmaxLogger.Localized(
+                    "正文：",
+                    "Response Body: "
+                ) + "\n   " + JsonCodec.FormatForLogging(body).Replace(
+                    "\n",
+                    "\n   "
+                );
+        }
+
+        /// <summary>Removes query parameters and replaces session identifiers with a route template.</summary>
+        private static string Route(
+            string path
+        )
+        {
             var route = (path ?? string.Empty).Split('?')[0];
             if (route == "/session")
                 return route;
-
-            if (route.StartsWith("/session/", StringComparison.Ordinal))
-                return route.EndsWith("/heartbeat", StringComparison.Ordinal) ? "/session/{id}/heartbeat" : "/session/{id}";
-
+            if (route == "/cos/sts" || route == "/cos/image/check")
+                return route;
+            if (route.StartsWith(
+                "/session/",
+                StringComparison.Ordinal
+            ))
+                return route.EndsWith(
+                    "/heartbeat",
+                    StringComparison.Ordinal
+                ) ? "/session/{id}/heartbeat" : "/session/{id}";
             return "<route>";
         }
     }

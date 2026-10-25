@@ -1,115 +1,190 @@
-using UNBridgeLib.LitJson;
+//
+//  JsonCodec.cs
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/XingMai/XmaxSDK-Unity
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
+using System;
+using System.Collections.Generic;
+using Agora.Rtc.LitJson;
 
 namespace Xmax.SDK
 {
+
     /// <summary>
-    /// 将厂商 JSON 库封装在 Foundation，避免业务层直接依赖其类型。
+    /// Isolates the bundled JSON implementation from SDK business layers.
     /// </summary>
     internal static class JsonCodec
     {
-        /// <summary>
-        /// 将可序列化对象编码为 JSON。
-        /// </summary>
-        /// <param name="value">需要编码为 JSON 的对象。</param>
-        /// <returns>对象的 JSON 文本。</returns>
-        internal static string Encode(object value) => JsonMapper.ToJson(value);
 
         /// <summary>
-        /// 解析 JSON 并转换为 SDK 内部包装类型。
+        /// Encodes a JSON object or array.
         /// </summary>
-        /// <param name="text">需要解析的 JSON 文本。</param>
-        /// <returns>解析后的值；JSON null 对应 null。</returns>
-        internal static JsonValue Decode(string text) => JsonValue.Wrap(JsonMapper.ToObject(text));
+        internal static string Encode(
+            object value
+        ) => JsonMapper.ToJson(value);
+
+        /// <summary>
+        /// Parses JSON into a neutral SDK value.
+        /// </summary>
+        internal static JsonValue Decode(
+            string text
+        ) => JsonValue.Wrap(JsonMapper.ToObject(text));
+
+        /// <summary>Formats sorted diagnostic JSON while redacting authentication fields.</summary>
+        internal static string FormatForLogging(
+            string text
+        )
+        {
+            try
+            {
+                var writer = new JsonWriter { PrettyPrint = true, IndentValue = 2 };
+                JsonMapper.ToJson(
+                    LogValue(JsonMapper.ToObject(text)),
+                    writer
+                );
+                return writer.ToString();
+            }
+            catch
+            {
+                return LogRedaction.Text(text);
+            }
+        }
+
+        /// <summary>Copies JSON into sorted diagnostic values without credential contents.</summary>
+        private static object LogValue(
+            JsonData value
+        )
+        {
+            if (value == null)
+                return null;
+            if (value.IsObject)
+            {
+                var result = new SortedDictionary<string, object>(StringComparer.Ordinal);
+                foreach (var key in value.Keys)
+                    result[key] = LogRedaction.IsCredential(key) ? "<redacted>" : LogValue(value[key]);
+                return result;
+            }
+            if (value.IsArray)
+            {
+                var result = new List<object>();
+                for (var index = 0; index < value.Count; index++)
+                    result.Add(LogValue(value[index]));
+                return result;
+            }
+            if (value.IsString)
+                return LogRedaction.Text((string)value);
+            if (value.IsBoolean)
+                return (bool)value;
+            if (value.IsInt)
+                return (int)value;
+            if (value.IsLong)
+                return (long)value;
+            if (value.IsUInt)
+                return (uint)value;
+            if (value.IsULong)
+                return (ulong)value;
+            if (value.IsDouble)
+                return (double)value;
+            return null;
+        }
     }
 
     /// <summary>
-    /// 封装 JSON 值的类型判断、对象取值和显式标量转换。
+    /// A neutral JSON value supporting object lookup and checked scalar conversions.
     /// </summary>
     internal sealed class JsonValue
     {
+
+        /// <summary>
+        /// The wrapped serialization-library value.
+        /// </summary>
         private readonly JsonData _data;
 
         /// <summary>
-        /// 保存底层 JSON 值供内部访问。
+        /// Wraps a serialization-library value.
         /// </summary>
-        /// <param name="data">底层序列化库的 JSON 值。</param>
-        private JsonValue(JsonData data)
+        private JsonValue(
+            JsonData data
+        )
         {
             _data = data;
         }
 
         /// <summary>
-        /// 包装底层 JSON 值并保留空值语义。
+        /// Returns a wrapped value, preserving JSON null as a null reference.
         /// </summary>
-        /// <param name="data">底层序列化库的 JSON 值。</param>
-        /// <returns>底层值为 null 时返回 null，否则返回包装对象。</returns>
-        internal static JsonValue Wrap(JsonData data) => data == null ? null : new JsonValue(data);
+        internal static JsonValue Wrap(
+            JsonData data
+        ) => data == null ? null : new JsonValue(data);
 
         /// <summary>
-        /// 当前值是否为 JSON 对象。
+        /// Whether this value is a JSON object.
         /// </summary>
         internal bool IsObject => _data.IsObject;
 
         /// <summary>
-        /// 当前值是否为字符串。
+        /// Whether this value is a JSON string.
         /// </summary>
         internal bool IsString => _data.IsString;
 
         /// <summary>
-        /// 当前值是否为布尔值。
+        /// Whether this value is a JSON Boolean.
         /// </summary>
         internal bool IsBoolean => _data.IsBoolean;
 
         /// <summary>
-        /// 当前值是否为 32 位整数。
+        /// Whether this value is a 32-bit JSON integer.
         /// </summary>
         internal bool IsInt => _data.IsInt;
 
         /// <summary>
-        /// 当前值是否为 64 位整数。
+        /// Whether this value is a 64-bit JSON integer.
         /// </summary>
         internal bool IsLong => _data.IsLong;
 
         /// <summary>
-        /// 仅对 JSON 对象检查指定键是否存在。
+        /// Checks whether a JSON object contains a named member.
         /// </summary>
-        /// <param name="key">需要读取或检查的 JSON 对象成员名称。</param>
-        /// <returns>当前值是对象且包含键时为 true。</returns>
-        internal bool ContainsKey(string key) => _data.IsObject && _data.ContainsKey(key);
+        internal bool ContainsKey(
+            string key
+        ) => _data.IsObject && _data.ContainsKey(key);
 
         /// <summary>
-        /// 按键读取 JSON 对象成员；调用前应检查对象类型和键是否存在。
+        /// The named object member; callers must validate the object and key first.
         /// </summary>
-        /// <param name="key">需要读取或检查的 JSON 对象成员名称。</param>
-        /// <value>指定键对应的包装值，JSON null 对应 null。</value>
         internal JsonValue this[string key] => Wrap(_data[key]);
 
         /// <summary>
-        /// 按底层 JSON 类型执行显式字符串转换，类型不匹配时抛出异常。
+        /// Converts a JSON string, rejecting other value types.
         /// </summary>
-        /// <param name="value">待解析或转换的 SDK 内部 JSON 值。</param>
-        /// <returns>当前 JSON 值对应的字符串。</returns>
-        public static explicit operator string(JsonValue value) => (string)value._data;
+        public static explicit operator string(
+            JsonValue value
+        ) => (string)value._data;
 
         /// <summary>
-        /// 按底层 JSON 类型执行显式布尔值转换，类型不匹配时抛出异常。
+        /// Converts a JSON Boolean, rejecting other value types.
         /// </summary>
-        /// <param name="value">待解析或转换的 SDK 内部 JSON 值。</param>
-        /// <returns>当前 JSON 值对应的布尔值。</returns>
-        public static explicit operator bool(JsonValue value) => (bool)value._data;
+        public static explicit operator bool(
+            JsonValue value
+        ) => (bool)value._data;
 
         /// <summary>
-        /// 按底层 JSON 类型执行显式32 位整数转换，类型不匹配时抛出异常。
+        /// Converts a 32-bit JSON integer, rejecting other value types.
         /// </summary>
-        /// <param name="value">待解析或转换的 SDK 内部 JSON 值。</param>
-        /// <returns>当前 JSON 值对应的32 位整数。</returns>
-        public static explicit operator int(JsonValue value) => (int)value._data;
+        public static explicit operator int(
+            JsonValue value
+        ) => (int)value._data;
 
         /// <summary>
-        /// 按底层 JSON 类型执行显式64 位整数转换，类型不匹配时抛出异常。
+        /// Converts a 64-bit JSON integer, rejecting other value types.
         /// </summary>
-        /// <param name="value">待解析或转换的 SDK 内部 JSON 值。</param>
-        /// <returns>当前 JSON 值对应的64 位整数。</returns>
-        public static explicit operator long(JsonValue value) => (long)value._data;
+        public static explicit operator long(
+            JsonValue value
+        ) => (long)value._data;
     }
 }

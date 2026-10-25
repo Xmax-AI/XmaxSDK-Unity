@@ -1,13 +1,21 @@
+//
+//  XmaxSdkInfo.cs
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/XingMai/XmaxSDK-Unity
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 namespace Xmax.SDK
 {
-    /// <summary>
-    /// SDK 包的版本信息。
-    /// </summary>
+
+    /// <summary>The SDK package version information.</summary>
     public static class XmaxSdkInfo
     {
-        /// <summary>
-        /// 与 package.json 保持一致的 SDK 版本号。
-        /// </summary>
-        public const string Version = "1.0.0";
+
+        /// <summary>The SDK version matching package.json.</summary>
+        public const string Version = "1.0.1";
     }
 }

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./docs/images/brand/xmax-sdk.png" alt="XmaxSDK — Realtime Interactive Video Generation" width="880">
+  <img src="./Materials/images/brand/xmax-sdk.png" alt="XmaxSDK — Realtime Interactive Video Generation" width="880">
 </p>
 
 <p align="center">
@@ -9,9 +9,9 @@
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-4C9A2A" alt="MIT License"></a>
 </p>
 
-We introduce XmaxSDK, a Unity SDK designed for real-time interactive video generation via Xmax models. XmaxSDK implements an end-to-end pipeline covering media acquisition, video streaming, frame-by-frame generation, and on-device rendering, enabling developers to seamlessly integrate low-latency, high-fidelity video transformations into creative applications at a much lower cost than alternative solutions.
+We introduce XmaxSDK, a Unity SDK designed for real-time interactive video generation via Xmax models. XmaxSDK implements an end-to-end pipeline covering media acquisition, video streaming, realtime generation, and on-device rendering, enabling developers to seamlessly integrate low-latency, high-fidelity video transformations into creative applications at a much lower cost than alternative solutions.
 
-<p align="center"><img src="./docs/images/xlab/generation-demo.gif" alt="X-Lab realtime generation demo" width="33%" /><img src="./docs/images/xlab/index-demo.gif" alt="X-Lab index demo" width="33%" /><img src="./docs/images/xlab/storage-demo.gif" alt="X-Lab storage demo" width="33%" /></p>
+<p align="center"><img src="./Materials/images/xlab/generation-demo.gif" alt="X-Lab realtime generation demo" width="33%" /><img src="./Materials/images/xlab/index-demo.gif" alt="X-Lab index demo" width="33%" /><img src="./Materials/images/xlab/storage-demo.gif" alt="X-Lab storage demo" width="33%" /></p>
 
 <br>
 
@@ -21,21 +21,21 @@ We introduce XmaxSDK, a Unity SDK designed for real-time interactive video gener
   <thead>
     <tr>
       <th height="104" align="center" valign="middle">
-        <img src="./docs/images/why/low-latency.svg" alt="Low latency" width="36" height="36"><br>Low latency
+        <img src="./Materials/images/why/low-latency.svg" alt="Low latency" width="36" height="36"><br>Low latency
       </th>
       <th height="104" align="center" valign="middle">
-        <img src="./docs/images/why/low-cost.svg" alt="Cost efficiency" width="36" height="36"><br>Cost efficiency
+        <img src="./Materials/images/why/low-cost.svg" alt="Cost efficiency" width="36" height="36"><br>Cost efficiency
       </th>
       <th height="104" align="center" valign="middle">
-        <img src="./docs/images/why/high-fidelity.svg" alt="High fidelity" width="36" height="36"><br>High fidelity
+        <img src="./Materials/images/why/high-fidelity.svg" alt="High fidelity" width="36" height="36"><br>High fidelity
       </th>
     </tr>
   </thead>
   <tbody>
     <tr>
-      <td>End-to-end latency is measured in <img src="./docs/images/why/latency-highlight.svg" alt="hundreds of milliseconds" width="192" height="20" align="absmiddle">, ensuring that updates to generation conditions and interaction controls are reflected instantly.</td>
-      <td>Run on a <img src="./docs/images/why/gpu-highlight.svg" alt="single RTX 5090" width="126" height="20" align="absmiddle">, reducing inference costs by orders of magnitude versus datacenter GPUs like H100.</td>
-      <td>Our models support real-time generation at up to <img src="./docs/images/why/resolution-highlight.svg" alt="1080p" width="48" height="20" align="absmiddle">, delivering production-ready, high-quality video output.</td>
+      <td>End-to-end latency is measured in <img src="./Materials/images/why/latency-highlight.svg" alt="hundreds of milliseconds" width="192" height="20" align="absmiddle">, ensuring that updates to generation conditions and interaction controls are reflected instantly.</td>
+      <td>Run on a <img src="./Materials/images/why/gpu-highlight.svg" alt="single RTX 5090" width="126" height="20" align="absmiddle">, reducing inference costs by orders of magnitude versus datacenter GPUs like H100.</td>
+      <td>Our models support real-time generation at up to <img src="./Materials/images/why/resolution-highlight.svg" alt="1080p" width="48" height="20" align="absmiddle">, delivering production-ready, high-quality video output.</td>
     </tr>
   </tbody>
 </table>
@@ -101,13 +101,14 @@ var client = new XmaxClient(
 );
 
 var realtime = client.CreateRealtimeManager(
-    new RealtimeConfiguration(Models.Realtime(RealtimeModel.X2_0))
+    new RealtimeConfiguration(RealtimeModel.X2_1_1_Preview_CN)
 );
 
-// Use the model default camera format: 832×1472@30. The Pro-only
-// 1024×1920 exceeds the X2_0 pixel budget and requires
-// RealtimeModel.X2_0_Pro; see the usage guide.
-var localStream = realtime.CreateLocalExternalStream();
+// Describe the actual source dimensions. This example uses 1920×1080@30.
+// XmaxSDK resolves the local media baseline and generation canvas separately.
+var localStream = realtime.CreateLocalExternalStream(
+    new RealtimeVideoFormat(1920, 1080, 30)
+);
 
 // Start your camera pipeline and push every frame on the main thread:
 // localStream.PushVideoFrame(XmaxVideoFrame.CreateRgba(rgba, width, height));
@@ -139,9 +140,12 @@ the input stream or starting generation.
 
 | Listener | Purpose |
 | --- | --- |
-| `StateChanged` | Observe connection and generation states; the `Disconnected` / `Error` terminal states carry a termination `Reason`. |
-| `RemoteFrameReceived` | Receive generated frames for recording or custom processing. |
+| `StateChanged` | Observe media readiness and realtime states; cleanup returns to `Ready` or `Idle`, with a termination `Reason`. |
+| `RemoteFrameReceived` | Receive borrowed generated frames on the Unity thread. |
+| `SetRemoteMediaFrameListener` | Register copied video packets with stream identity and continuity metadata on a serial background queue. |
 | `NetworkQualityChanged` | Monitor uplink and downlink network quality. |
+| `UplinkVideoStatisticsChanged` / `DownlinkVideoStatisticsChanged` | Receive measured video statistics, or null when unavailable after reset. |
+| `PerformanceAlarm` | Receive device encoding limitation or recovery with an optional suggested format. |
 
 For example, monitor state changes and termination reasons:
 
@@ -162,12 +166,66 @@ events.
 
 <br>
 
+### Models, media sizing, and adaptive quality
+
+Use `RealtimeModel.X2_1_1_Preview_CN` or `RealtimeModel.X2_1_1_Preview_US`
+for the corresponding regional preview model. The previous `X2_0` and
+`X2_0_Pro` models are no longer supported.
+
+External input preserves its aspect ratio within the model's 200,000–2,100,000
+pixel range. `LocalStream.VideoFormat` describes the resolved media baseline;
+`SourceVideoFormat` retains the input format. Generation uses the closest
+`1024×1920` or `1920×1024` canvas and requests containment when aspect ratios
+differ.
+
+Adaptive quality is enabled by default. Uplink and downlink independently
+select L1–L5, using recent model-specific history or L2 without valid history.
+To start at L1 and control quality manually, pass
+`isAdaptiveQualityEnabled: false` to `RealtimeConfiguration`.
+
+```csharp
+await realtime.SetUplinkQualityLevelAsync(RealtimeQualityLevel.L3);
+await realtime.SetDownlinkQualityLevelAsync(RealtimeQualityLevel.L2);
+```
+
+These APIs require active generation. A downlink change completes when the
+configuration has been submitted; received frames report the actual output
+dimensions. Media baseline dimensions and interaction coordinates stay
+unchanged when transport quality changes.
+
+`SendTracks` accepts normalized Unity `Vector2` coordinates from top-left
+`(0,0)` to bottom-right `(1,1)` across the full media.
+
+<br>
+
+### Upload reference media
+
+Storage uses the client's general service endpoint and works independently of
+realtime connections. Create and call its APIs on the Unity main thread:
+
+```csharp
+var storage = client.CreateStorageManager();
+var uploaded = await storage.UploadImageWithSafetyCheckAsync(
+    imageBytes,
+    "reference.png",
+    "image/png"
+);
+var context = new RealtimeContext("A watercolor landscape", uploaded.Url.AbsoluteUri);
+```
+
+Image and video uploads accept bytes or existing files, support progress and
+cancellation, and return the object URL and key. Downloads stream to a temporary
+file before committing the destination. See [Storage](./Materials/usage.md#storage)
+for overloads, transfer limits, and error handling.
+
+<br>
+
 ### Resource Cleanup
 
 - **`DisconnectAsync` — Stop Remote Generation**
 
-  Stops remote generation and tears down RTC and the server session (stops
-  billing) while keeping the local camera stream and preview active. Use
+  Stops remote generation, leaves the RTC room, and closes the server session
+  while retaining the engine with the local stream and preview. Use
   this when ending the online session but staying on the current screen. You
   can start a new session later using the same local stream:
 
@@ -194,13 +252,13 @@ events.
 > [!TIP]
 > For complete usage examples, including explicit local streams, encoding
 > configuration, interaction coordinates, and logging options, see the
-> [usage guide](./docs/usage.md).
+> [usage guide](./Materials/usage.md).
 
 <br>
 
 ## Dependencies
 
-- <ins><strong>VolcEngine RTC SDK for Unity 3.58.1</strong></ins> enables low-latency, real-time audio and video communication.
+- <ins><strong>Agora RTC SDK</strong></ins> enables low-latency, realtime video communication.
 
 <br>
 

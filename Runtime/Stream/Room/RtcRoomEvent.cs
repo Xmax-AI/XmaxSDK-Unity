@@ -1,148 +1,229 @@
+//
+//  RtcRoomEvent.cs
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/XingMai/XmaxSDK-Unity
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
+using System;
 using System.Collections.Generic;
+using UnityEngine;
 
 namespace Xmax.SDK
 {
+
     /// <summary>
-    /// 按 Xmax 房间协议编码 JSON 消息，统一字段名称和兼容参数。
+    /// Encodes generation, target-size, and normalized interaction messages.
     /// </summary>
     internal static class RtcRoomEvent
     {
+
         /// <summary>
-        /// 编码包含任务标识和生成条件的启动消息。
+        /// Encodes a generation start with independently resolved canvas and return dimensions.
         /// </summary>
-        /// <param name="userId">RTC 用户标识。</param>
-        /// <param name="taskId">本次生成任务的唯一标识，用于校验任务归属。</param>
-        /// <param name="videoFormat">本地视频编码格式，宽高须为正偶数且帧率大于零。</param>
-        /// <param name="context">已经由上层解析的非空生成条件。</param>
-        /// <returns>start 事件的 JSON 文本。</returns>
         internal static string Start(
             string userId,
             string taskId,
-            RealtimeVideoFormat videoFormat,
-            RealtimeContext context)
+            RealtimeVideoFormat generation,
+            RealtimeVideoFormat target,
+            RealtimeContext context,
+            bool contain,
+            bool faceRestoration = false
+        )
         {
-            return JsonCodec.Encode(new Dictionary<string, object>
-            {
-                ["event"] = "start",
-                ["params"] = Parameters(videoFormat, context, true),
-                ["user_id"] = userId,
-                ["uid"] = taskId,
-                ["session_uid"] = taskId
-            });
+            var parameters = Parameters(
+                generation,
+                context,
+                contain,
+                faceRestoration
+            );
+            parameters["mirror"] = false;
+            AddTarget(
+                parameters,
+                target
+            );
+            return Encode(
+                "start",
+                userId,
+                taskId,
+                parameters
+            );
         }
 
         /// <summary>
-        /// 编码更新当前生成条件的消息。
+        /// Encodes conditions for the existing generation task without changing return dimensions.
         /// </summary>
-        /// <param name="userId">RTC 用户标识。</param>
-        /// <param name="videoFormat">本地视频编码格式，宽高须为正偶数且帧率大于零。</param>
-        /// <param name="context">已经由上层解析的非空生成条件。</param>
-        /// <returns>change_condition 事件的 JSON 文本。</returns>
         internal static string ChangeCondition(
             string userId,
-            RealtimeVideoFormat videoFormat,
-            RealtimeContext context)
+            string taskId,
+            RealtimeVideoFormat generation,
+            RealtimeContext context,
+            bool contain,
+            bool faceRestoration = false
+        ) => Encode(
+            "change_condition",
+            userId,
+            taskId,
+            Parameters(
+                generation,
+                context,
+                contain,
+                faceRestoration
+            )
+        );
+
+        /// <summary>
+        /// Encodes a new return size and server encoding budget.
+        /// </summary>
+        internal static string ChangeTargetSize(
+            string userId,
+            string taskId,
+            RealtimeVideoFormat target
+        )
         {
-            return JsonCodec.Encode(new Dictionary<string, object>
-            {
-                ["event"] = "change_condition",
-                ["params"] = Parameters(videoFormat, context, false),
-                ["user_id"] = userId
-            });
+            var parameters = new Dictionary<string, object>();
+            AddTarget(
+                parameters,
+                target
+            );
+            return Encode(
+                "change_target_size",
+                userId,
+                taskId,
+                parameters
+            );
         }
 
         /// <summary>
-        /// 编码停止生成消息，有任务标识时附带 session_uid。
+        /// Encodes generation termination with both task identity fields.
         /// </summary>
-        /// <param name="userId">RTC 用户标识。</param>
-        /// <param name="taskId">本次生成任务的唯一标识，用于校验任务归属。</param>
-        /// <returns>stop 事件的 JSON 文本。</returns>
-        internal static string Stop(string userId, string taskId)
-        {
-            var message = new Dictionary<string, object>
-            {
-                ["event"] = "stop",
-                ["user_id"] = userId
-            };
-            if (!string.IsNullOrEmpty(taskId))
-            {
-                message["session_uid"] = taskId;
-            }
+        internal static string Stop(
+            string userId,
+            string taskId
+        ) => Encode(
+            "stop",
+            userId,
+            taskId
+        );
 
+        /// <summary>
+        /// Encodes a room heartbeat.
+        /// </summary>
+        internal static string Heartbeat(
+            string userId
+        ) => Encode(
+            "heartbeat",
+            userId,
+            null
+        );
+
+        /// <summary>
+        /// Encodes normalized media points without applying an additional dimension conversion.
+        /// </summary>
+        internal static string Tracks(
+            string userId,
+            string taskId,
+            IReadOnlyList<RealtimePoint> tracks
+        )
+        {
+            var points = new List<double[]>(tracks.Count);
+            foreach (var point in tracks)
+                points.Add(new[] { point.X, point.Y });
+            var message = Envelope(
+                "tracks",
+                userId,
+                taskId
+            );
+            message["tracks"] = points;
             return JsonCodec.Encode(message);
         }
 
         /// <summary>
-        /// 编码维持房间活动状态的消息。
+        /// Creates generation canvas parameters, retaining the media when aspect ratios differ.
         /// </summary>
-        /// <param name="userId">RTC 用户标识。</param>
-        /// <returns>heartbeat 事件的 JSON 文本。</returns>
-        internal static string Heartbeat(string userId)
-        {
-            return JsonCodec.Encode(new Dictionary<string, object>
-            {
-                ["event"] = "heartbeat",
-                ["user_id"] = userId
-            });
-        }
-
-        /// <summary>
-        /// 将编码画面坐标序列化为整型点数组并附带当前任务标识。
-        /// </summary>
-        /// <param name="userId">RTC 用户标识。</param>
-        /// <param name="taskId">本次生成任务的唯一标识，用于校验任务归属。</param>
-        /// <param name="tracks">以编码画面左上角为原点的交互点序列，坐标须位于画面内。</param>
-        /// <returns>tracks 事件的 JSON 文本。</returns>
-        internal static string Tracks(
-            string userId,
-            string taskId,
-            IReadOnlyList<XmaxTrackPoint> tracks)
-        {
-            var serializedTracks = new List<int[]>(tracks.Count);
-
-            for (var index = 0; index < tracks.Count; index++)
-            {
-                serializedTracks.Add(new[] { tracks[index].X, tracks[index].Y });
-            }
-
-            return JsonCodec.Encode(new Dictionary<string, object>
-            {
-                ["event"] = "tracks",
-                ["user_id"] = userId,
-                ["uid"] = taskId,
-                ["session_uid"] = taskId,
-                ["tracks"] = serializedTracks
-            });
-        }
-
-        /// <summary>
-        /// 组装生成尺寸、提示词和可选参考路径，按需保留旧参考字段。
-        /// </summary>
-        /// <param name="videoFormat">本地视频编码格式，宽高须为正偶数且帧率大于零。</param>
-        /// <param name="context">已经由上层解析的非空生成条件。</param>
-        /// <param name="includeLegacyReference">是否同时写入旧协议的 ref_image 字段。</param>
-        /// <returns>用于房间消息 params 字段的参数字典。</returns>
         private static Dictionary<string, object> Parameters(
-            RealtimeVideoFormat videoFormat,
+            RealtimeVideoFormat generation,
             RealtimeContext context,
-            bool includeLegacyReference)
+            bool contain,
+            bool faceRestoration = false
+        )
         {
             var parameters = new Dictionary<string, object>
             {
                 ["model"] = "default",
-                ["size"] = new[] { videoFormat.Width, videoFormat.Height },
-                ["prompt"] = context.Prompt
+                ["size"] = new[] { generation.Width, generation.Height },
+                ["prompt"] = context.Prompt,
+                ["face_replace"] = faceRestoration
             };
             if (!string.IsNullOrEmpty(context.ReferencePath))
-            {
                 parameters["ref_image_path"] = context.ReferencePath;
-                if (includeLegacyReference)
-                {
-                    parameters["ref_image"] = context.ReferencePath;
-                }
-            }
-
+            if (contain)
+                parameters["padding"] = "contain";
             return parameters;
+        }
+
+        /// <summary>
+        /// Calculates an independent downlink budget using 24 fps and a 500-to-10000 kbps range.
+        /// </summary>
+        private static void AddTarget(
+            Dictionary<string, object> parameters,
+            RealtimeVideoFormat target
+        )
+        {
+            var resolved = EncodingBitratePolicy.Resolve(new RealtimeVideoFormat(
+                    target.Width,
+                    target.Height,
+                    24
+                ));
+            parameters["target_size"] = new[] { target.Width, target.Height };
+            parameters["min_bitrate"] = 500;
+            parameters["max_bitrate"] = Math.Min(10000, Math.Max(500, resolved.MaximumBitrate));
+        }
+
+        /// <summary>
+        /// Encodes a message with optional generation parameters.
+        /// </summary>
+        private static string Encode(
+            string name,
+            string userId,
+            string taskId,
+            Dictionary<string, object> parameters = null
+        )
+        {
+            var message = Envelope(
+                name,
+                userId,
+                taskId
+            );
+            if (parameters != null)
+                message["params"] = parameters;
+            return JsonCodec.Encode(message);
+        }
+
+        /// <summary>
+        /// Creates common task and client runtime fields.
+        /// </summary>
+        private static Dictionary<string, object> Envelope(
+            string name,
+            string userId,
+            string taskId
+        )
+        {
+            var message = new Dictionary<string, object>
+            {
+                ["event"] = name,
+                ["user_id"] = userId,
+                ["runtime"] = RuntimeInfo.ToDictionary()
+            };
+            if (!string.IsNullOrEmpty(taskId))
+            {
+                message["uid"] = taskId;
+                message["session_uid"] = taskId;
+            }
+            return message;
         }
     }
 }

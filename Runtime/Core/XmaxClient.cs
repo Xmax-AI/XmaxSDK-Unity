@@ -1,48 +1,75 @@
+//
+//  XmaxClient.cs
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/XingMai/XmaxSDK-Unity
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 namespace Xmax.SDK
 {
-    /// <summary>
-    /// 共享配置和 HTTP 服务的 SDK 入口；每次创建客户端都会应用进程级日志选项。
-    /// </summary>
-    /// <remarks>
-    /// 最近创建的客户端决定进程级日志选项；从已有客户端创建管理器不会再次修改日志配置。
-    /// </remarks>
+
+    /// <summary>Provides shared client configuration and services; creating a client applies process-wide logging preferences.</summary>
     public sealed class XmaxClient
     {
+
+        /// <summary>The general business API used by storage managers.</summary>
         private readonly IApiService _api;
 
-        /// <summary>
-        /// 客户端创建时使用的不可变配置。
-        /// </summary>
+        /// <summary>The realtime session API shared by realtime managers.</summary>
+        private readonly IApiService _realtimeApi;
+
+        /// <summary>The immutable configuration used to create this client.</summary>
         public XmaxConfiguration Configuration { get; }
 
-        /// <summary>
-        /// 创建客户端并应用全局日志配置；API key 在发起在线请求时校验。
-        /// </summary>
-        /// <param name="configuration">客户端的不可变服务地址、凭证和日志配置。</param>
-        public XmaxClient(XmaxConfiguration configuration)
+        /// <summary>Creates a client and applies global logging options and detail language. API credentials are validated before online requests.</summary>
+        public XmaxClient(
+            XmaxConfiguration configuration
+        )
         {
             Configuration = configuration ?? throw new XmaxException(
                 XmaxErrorCode.InvalidConfiguration,
-                "Xmax configuration is required.");
+                "Xmax configuration is required."
+            );
             _api = new ApiService(Configuration);
-            XmaxLogger.Configure(Configuration.LoggerOptions);
+            _realtimeApi = new ApiService(
+                Configuration,
+                realtime: true
+            );
+            XmaxLogger.Configure(
+                Configuration.LoggerOptions,
+                Configuration.LogLanguage
+            );
         }
 
-        /// <summary>
-        /// 使用共享客户端配置和 HTTP 服务创建独立的实时管理器。
-        /// </summary>
-        /// <param name="options">当前管理器使用的实时模型配置。</param>
-        /// <returns>具有独立连接、生成和本地流状态的管理器。</returns>
-        public XmaxRealtimeManager CreateRealtimeManager(RealtimeConfiguration options)
+        /// <summary>Creates an independent realtime manager using this client's shared configuration and API service.</summary>
+        public XmaxRealtimeManager CreateRealtimeManager(
+            RealtimeConfiguration options
+        )
         {
-            return new XmaxRealtimeManager(Configuration, options,
-                new RealtimeSessionService(_api), null);
+            return new XmaxRealtimeManager(
+                Configuration,
+                options,
+                new RealtimeSessionService(_realtimeApi),
+                null
+            );
         }
 
-        /// <summary>
-        /// 创建用于查询模型限制和推荐编码尺寸的媒体服务。
-        /// </summary>
-        /// <returns>无需在线请求的媒体配置服务。</returns>
+        /// <summary>Creates a storage manager using the general API for this client's service environment.</summary>
+        ///
+        /// <remarks>Create and use the manager on the Unity main thread.</remarks>
+        public XmaxStorageManager CreateStorageManager()
+        {
+            Configuration.Validate();
+            return new XmaxStorageManager(new StorageService(
+                _api,
+                new StorageManager()
+            ));
+        }
+
+        /// <summary>Creates a service for local model capability and media-size queries.</summary>
         public MediaService CreateMediaService() => new MediaService();
     }
 }

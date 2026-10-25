@@ -1,90 +1,69 @@
+//
+//  RtcNetworkQuality.cs
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/XingMai/XmaxSDK-Unity
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 namespace Xmax.SDK
 {
-    /// <summary>
-    /// RTC 适配层统一的网络质量等级。
-    /// </summary>
+
+    /// <summary>A vendor-neutral RTC network quality rating.</summary>
     internal enum RtcQualityLevel
     {
-        /// <summary>
-        /// 未知或无法识别的网络质量。
-        /// </summary>
+
+        /// <summary>No recognized network quality rating is available.</summary>
         Unknown,
 
-        /// <summary>
-        /// 网络质量极佳。
-        /// </summary>
+        /// <summary>The network quality is excellent.</summary>
         Excellent,
 
-        /// <summary>
-        /// 网络质量良好。
-        /// </summary>
+        /// <summary>The network quality is good.</summary>
         Good,
 
-        /// <summary>
-        /// 网络质量一般。
-        /// </summary>
+        /// <summary>The network quality is fair.</summary>
         Poor,
 
-        /// <summary>
-        /// 网络质量较差。
-        /// </summary>
+        /// <summary>The network quality is bad.</summary>
         Bad,
 
-        /// <summary>
-        /// 网络质量很差。
-        /// </summary>
+        /// <summary>The network quality is very bad.</summary>
         VeryBad,
 
-        /// <summary>
-        /// 网络连接不可用。
-        /// </summary>
+        /// <summary>The network connection is unavailable.</summary>
         Down
     }
 
-    /// <summary>
-    /// RTC 适配层的本地网络质量快照。
-    /// </summary>
+    /// <summary>A vendor-neutral snapshot of local directional ratings and available transport measurements.</summary>
     internal readonly struct RtcNetworkQuality
     {
-        /// <summary>
-        /// 本地上行网络质量等级。
-        /// </summary>
+
+        /// <summary>The local sending direction network rating.</summary>
         internal readonly RtcQualityLevel Uplink;
 
-        /// <summary>
-        /// 本地下行网络质量等级。
-        /// </summary>
+        /// <summary>The local receiving direction network rating.</summary>
         internal readonly RtcQualityLevel Downlink;
 
-        /// <summary>
-        /// 本地网络丢包比例，沿用 RTC 统计值。
-        /// </summary>
+        /// <summary>The reported packet-loss ratio, or zero when unavailable.</summary>
         internal readonly double PacketLossRatio;
 
-        /// <summary>
-        /// 往返时延，单位为毫秒。
-        /// </summary>
+        /// <summary>The reported round-trip latency, in milliseconds, or zero when unavailable.</summary>
         internal readonly int RoundTripMilliseconds;
 
-        /// <summary>
-        /// 估算可用带宽，单位为比特每秒。
-        /// </summary>
+        /// <summary>The estimated available bandwidth, in bits per second, or zero when unavailable.</summary>
         internal readonly int BandwidthBitsPerSecond;
 
-        /// <summary>
-        /// 保存上下行等级及本地网络统计。
-        /// </summary>
-        /// <param name="uplink">本地上行网络质量等级。</param>
-        /// <param name="downlink">本地下行网络质量等级。</param>
-        /// <param name="packetLossRatio">本地网络丢包比例，沿用 RTC 统计值。</param>
-        /// <param name="rtt">本地网络往返时延，单位为毫秒。</param>
-        /// <param name="bandwidth">估算可用带宽，单位为比特每秒。</param>
+        /// <summary>Creates a snapshot of the supplied network ratings and transport measurements.</summary>
         internal RtcNetworkQuality(
             RtcQualityLevel uplink,
             RtcQualityLevel downlink,
             double packetLossRatio,
             int rtt,
-            int bandwidth)
+            int bandwidth
+        )
         {
             Uplink = uplink;
             Downlink = downlink;

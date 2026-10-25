@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Threading;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using NUnit.Framework;
 using UnityEngine;
@@ -47,19 +48,22 @@ namespace Xmax.SDK.Tests
             XmaxLogger.Rtc.Info(() => "visible", XmaxLoggerOption.Performance);
             Assert.AreEqual(2, _logs.Count);
         }
-        [Test] public void ApiAndErrorLogsExcludeIdentifiersCredentialsAndExceptionBodies()
+        [Test] public void ApiAndErrorLogsRedactCredentialsAndRetainDiagnosticDetails()
         {
-            XmaxLogger.Configure(XmaxLoggerOption.All);
+            XmaxLogger.Configure(XmaxLoggerOption.All, XmaxLogger.Language.English);
             ApiLogger.Response("PUT", "/session/private-session/heartbeat?token=secret-token", 200, 123, 42);
-            LogAssert.Expect(LogType.Error, "[Xmax][API] POST <route> failed=ApiError duration=50ms");
-            ApiLogger.Failure("POST", "/private-path?apiKey=secret-key", new XmaxException(XmaxErrorCode.ApiError, "secret-body"), 50);
-            LogAssert.Expect(LogType.Error, "[Xmax][Realtime] Operation failed: Exception");
-            XmaxLogger.Realtime.Failure(new Exception("secret-prompt"));
+            LogAssert.Expect(LogType.Error, new Regex("^\\[Xmax\\]\\[API\\] POST <route>"));
+            ApiLogger.Failure("POST", "/private-path?apiKey=secret-key", new XmaxException(XmaxErrorCode.ApiError, "Request failed token=secret-token", 4001, 403), 50);
+            LogAssert.Expect(LogType.Error, new Regex("^\\[Xmax\\]\\[Realtime\\] 操作失败"));
+            XmaxLogger.Realtime.Failure(new Exception("Transport failed Authorization=Bearer secret-bearer"));
             var output = string.Join("\n", _logs);
             Assert.That(output, Does.Contain("/session/{id}/heartbeat"));
-            Assert.That(output, Does.Contain("status=200 duration=42ms bytes=123"));
-            Assert.That(output, Does.Contain("failed=ApiError"));
-            foreach (var secret in new[] { "private-session", "private-path", "secret-token", "secret-key", "secret-body", "secret-prompt" })
+            Assert.That(output, Does.Contain("Status: 200"));
+            Assert.That(output, Does.Contain("42 ms"));
+            Assert.That(output, Does.Contain("123 bytes"));
+            Assert.That(output, Does.Contain("ApiError, API 4001, HTTP 403"));
+            Assert.That(output, Does.Contain("Transport failed"));
+            foreach (var secret in new[] { "private-session", "private-path", "secret-token", "secret-key", "secret-bearer" })
                 Assert.That(output, Does.Not.Contain(secret));
         }
         [Test] public void ClientConfigurationAppliesLoggerOptionsWithoutValidatingApiKey()
@@ -101,7 +105,7 @@ namespace Xmax.SDK.Tests
         {
             var oldClient = new XmaxClient(new XmaxConfiguration("", loggerOptions: XmaxLoggerOption.Business));
             _ = new XmaxClient(new XmaxConfiguration("", loggerOptions: XmaxLoggerOption.Performance));
-            var manager = oldClient.CreateRealtimeManager(new RealtimeConfiguration(Models.Realtime(RealtimeModel.X2_0)));
+            var manager = oldClient.CreateRealtimeManager(new RealtimeConfiguration(RealtimeModel.X2_1_1_Preview_CN, false));
             try
             {
                 Assert.True(XmaxLogger.IsEnabled(XmaxLoggerOption.Performance));
@@ -150,45 +154,51 @@ namespace Xmax.SDK.Tests
             await stream.DisconnectAsync();
             rtc.Quality(); Assert.AreEqual(1, count);
         });
-        [Test] public void StartupTimingRejectsStaleTaskConfirmationAndResetsBetweenAttempts()
+        [Test] public void StartupTimingUsesFourStagesAndRejectsStaleTasks()
         {
             var now = 0.0; var timing = new RealtimeTiming(() => now);
-            XmaxLogger.Configure(XmaxLoggerOption.Performance);
-            timing.Begin(); now = 10; timing.Mark("session-start"); now = 30; timing.Mark("session-end");
-            now = 40; timing.BeginSignal("current"); now = 41; timing.SignalSent("current");
-            timing.MatchSei("old");
-            Assert.That(timing.Format("failed"), Does.Contain("pending=confirmation"));
-            now = 80; timing.MatchSei("current"); now = 100; timing.Finish();
-            Assert.That(_logs[0], Does.Contain("total=100.0ms"));
-            Assert.That(_logs[0], Does.Contain("session=20.0ms"));
-            Assert.That(_logs[0], Does.Contain("confirmation=40.0ms"));
-            Assert.That(_logs[0], Does.Contain("first-frame=20.0ms"));
+            XmaxLogger.Configure(XmaxLoggerOption.Performance, XmaxLogger.Language.English);
+            timing.Begin(); now = 10; timing.BeginSessionCreation(); now = 30; timing.FinishSessionCreation();
+            now = 35; timing.BeginRoomJoin(); now = 45; timing.FinishRoomJoin();
+            now = 46; timing.BeginLocalPublication(); now = 49; timing.FinishLocalPublication();
+            now = 50; timing.BeginSignal("current");
+            timing.FinishFirstFrame("old"); timing.Finish("old");
+            Assert.IsEmpty(_logs);
+            now = 110; timing.FinishFirstFrame("current"); now = 120; timing.Finish("current");
+            var success = _logs[0];
+            Assert.That(success, Does.Contain("[Xmax][Realtime]"));
+            Assert.That(success, Does.Contain("Total Duration: 120.0 ms"));
+            Assert.That(success, Does.Contain("Session Creation: 20.0 ms"));
+            Assert.That(success, Does.Contain("RTC Room Join: 10.0 ms"));
+            Assert.That(success, Does.Contain("Local Stream Publication: 3.0 ms"));
+            Assert.That(success, Does.Contain("First Frame Arrival: 60.0 ms"));
+            Assert.That(success, Does.Not.Contain("Confirmation"));
+            timing.Finish("current"); Assert.AreEqual(1, _logs.Count);
             timing.Begin(); now = 150;
-            timing.Fail(new XmaxException(XmaxErrorCode.Timeout, "secret failure"));
-            Assert.That(_logs[1], Does.Contain("total=50.0ms"));
-            Assert.That(_logs[1], Does.Contain("pending=preparation"));
-            Assert.That(_logs[1], Does.Not.Contain("secret failure"));
-            Assert.That(_logs[1], Does.Not.Contain("session="));
-            timing.Begin(); timing.Fail(new OperationCanceledException());
+            timing.FinishFailure(new XmaxException(XmaxErrorCode.Timeout, "Startup timed out."));
+            Assert.That(_logs[1], Does.Contain("Elapsed Time: 30.0 ms"));
+            Assert.That(_logs[1], Does.Contain("Current Stage: Invocation and Local Preparation"));
+            Assert.That(_logs[1], Does.Contain("Session Creation: —"));
+            timing.Begin(); timing.FinishFailure(new OperationCanceledException());
             Assert.AreEqual(2, _logs.Count);
         }
         [UnityTest] public IEnumerator CombinedStartupProducesRealStageTiming() => AsyncTest.Run(async () =>
         {
             var timing = new RealtimeTiming(); var rtc = new FakeRtc();
-            var stream = new StreamController(rtc, taskIdFactory: () => "startup", timing: timing);
-            var client = new XmaxClient(new XmaxConfiguration("test", loggerOptions: XmaxLoggerOption.Performance));
+            var stream = new StreamController(rtc, timing: timing);
+            var client = new XmaxClient(new XmaxConfiguration("test", XmaxEnvironment.Global, XmaxLoggerOption.Performance));
             var manager = new XmaxRealtimeManager(client.Configuration,
-                new RealtimeConfiguration(Models.Realtime(RealtimeModel.X2_0)), new FakeSessions(), stream, timing);
+                new RealtimeConfiguration(RealtimeModel.X2_1_1_Preview_CN, false), new FakeSessions(), stream, timing);
             try
             {
                 var local = manager.CreateLocalExternalStream(new RealtimeVideoFormat(1280, 720, 30));
                 var start = manager.StartGenerationAsync(local, new RealtimeContext("secret prompt"));
-                rtc.Sei("startup"); rtc.Frame(); await start;
+                rtc.Publish(); rtc.Frame(); await start;
                 var output = string.Join("\n", _logs);
-                foreach (var stage in new[] { "session=", "room=", "connection=", "signal=", "confirmation=", "first-frame=" })
+                foreach (var stage in new[] { "Session Creation:", "RTC Room Join:", "Local Stream Publication:", "First Frame Arrival:" })
                     Assert.That(output, Does.Contain(stage));
                 Assert.That(output, Does.Not.Contain("secret prompt"));
-                Assert.That(output, Does.Not.Contain("[Realtime]"));
+                Assert.That(output, Does.Contain("[Xmax][Realtime]"));
             }
             finally { await manager.CloseAsync(); }
         });

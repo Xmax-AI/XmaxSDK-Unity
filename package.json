@@ -1,14 +1,17 @@
 {
   "name": "ai.xmax.sdk",
   "displayName": "XmaxSDK",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "unity": "6000.0",
-  "description": "Xmax realtime video SDK with host-provided video input and VolcEngine RTC transport.",
+  "description": "Xmax realtime generation SDK with host-provided video input and Agora RTC transport.",
   "author": {
     "name": "Xmax"
   },
   "keywords": [
     "xmax",
     "rtc"
-  ]
+  ],
+  "dependencies": {
+    "com.unity.ugui": "2.0.0"
+  }
 }

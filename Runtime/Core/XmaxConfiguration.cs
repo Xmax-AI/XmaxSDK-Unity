@@ -1,102 +1,145 @@
+//
+//  XmaxConfiguration.cs
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/XingMai/XmaxSDK-Unity
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 using System;
 
 namespace Xmax.SDK
 {
-    /// <summary>
-    /// SDK 的服务端环境。
-    /// </summary>
-    public enum XmaxEnvironment
-    {
-        /// <summary>
-        /// 中国区服务环境。
-        /// </summary>
-        China,
-
-        /// <summary>
-        /// 全球服务环境。
-        /// </summary>
-        Global
-    }
 
     /// <summary>
-    /// 客户端的 API 地址、凭证和日志配置；构造时规范化，在线请求前校验。
+    /// The service address, authentication, and logging settings for a client.
     /// </summary>
     public sealed class XmaxConfiguration
     {
+
         /// <summary>
-        /// 默认中国区 API 根地址。
+        /// The default API base URL for the China environment.
         /// </summary>
         public const string DefaultBaseUrl = "https://cloud.xmax.22duck.cn/open/api/v1";
 
         /// <summary>
-        /// 全球服务 API 根地址。
+        /// The API base URL for the global environment.
         /// </summary>
         public const string GlobalBaseUrl = "https://api.xmax.cloud/open/api/v1";
 
+        /// <summary>The realtime session API base URL for the global environment.</summary>
+        public const string GlobalRealtimeBaseUrl = "https://api.xmax.ai/open/api/v1";
+
         /// <summary>
-        /// 去除首尾空白后的 API key，仅用于在线请求鉴权。
+        /// The API key used to authenticate online requests.
         /// </summary>
         public string ApiKey { get; }
 
         /// <summary>
-        /// 去除首尾空白和末尾斜杠后的 API 根地址。
+        /// The base URL used for API requests.
         /// </summary>
         public string BaseUrl { get; }
 
+        /// <summary>The base URL used for realtime session creation, heartbeat, and closure.</summary>
+        public string RealtimeBaseUrl { get; }
+
         /// <summary>
-        /// 创建客户端时应用的进程级日志过滤选项。
+        /// The process-wide logging options applied when a client is created.
         /// </summary>
         public XmaxLoggerOption LoggerOptions { get; }
 
+        /// <summary>The log detail language selected by the service environment.</summary>
+        internal XmaxLogger.Language LogLanguage { get; }
+
         /// <summary>
-        /// 保存并规范化客户端配置；不在构造时校验在线凭证。
+        /// Creates a client configuration for the selected service environment.
         /// </summary>
-        /// <param name="apiKey">在线请求使用的 API key；仅本地预览时可为空。</param>
-        /// <param name="environment">服务端区域，用于选择对应的 API 根地址。</param>
-        /// <param name="loggerOptions">全局日志过滤选项，默认关闭，由创建客户端时应用。</param>
+        ///
+        /// <param name="apiKey">The online API key; may be empty for local preview.</param>
+        /// <param name="environment">The service region selecting the API base URL.</param>
+        /// <param name="loggerOptions">The logging filter applied when creating a client.</param>
         public XmaxConfiguration(
             string apiKey,
             XmaxEnvironment environment,
-            XmaxLoggerOption loggerOptions = XmaxLoggerOption.None)
+            XmaxLoggerOption loggerOptions = XmaxLoggerOption.None
+        )
             : this(
                 apiKey,
                 environment == XmaxEnvironment.China ? DefaultBaseUrl :
                 environment == XmaxEnvironment.Global ? GlobalBaseUrl :
                 throw new ArgumentOutOfRangeException(nameof(environment)),
-                loggerOptions)
+                loggerOptions
+            )
         {
+            LogLanguage = environment == XmaxEnvironment.Global ? XmaxLogger.Language.English : XmaxLogger.Language.Chinese;
         }
 
         /// <summary>
-        /// 保存并规范化客户端配置；不在构造时校验在线凭证。
+        /// Creates a client configuration with an explicit service address.
         /// </summary>
-        /// <param name="apiKey">在线请求使用的 API key；仅本地预览时可为空。</param>
-        /// <param name="baseUrl">HTTP API 根地址，在线请求时校验为绝对 HTTP 或 HTTPS URL。</param>
-        /// <param name="loggerOptions">全局日志过滤选项，默认关闭，由创建客户端时应用。</param>
+        ///
+        /// <param name="apiKey">The online API key; may be empty for local preview.</param>
+        /// <param name="baseUrl">The absolute HTTP or HTTPS service URL, validated before online requests.</param>
+        /// <param name="loggerOptions">The logging filter applied when creating a client.</param>
         public XmaxConfiguration(
             string apiKey,
             string baseUrl = DefaultBaseUrl,
-            XmaxLoggerOption loggerOptions = XmaxLoggerOption.None)
+            XmaxLoggerOption loggerOptions = XmaxLoggerOption.None
+        )
         {
             ApiKey = (apiKey ?? string.Empty).Trim();
             BaseUrl = (baseUrl ?? string.Empty).Trim().TrimEnd('/');
             LoggerOptions = loggerOptions;
+            RealtimeBaseUrl = string.Equals(
+                BaseUrl,
+                GlobalBaseUrl,
+                StringComparison.OrdinalIgnoreCase
+            )
+                ? GlobalRealtimeBaseUrl : BaseUrl;
+            LogLanguage = Uri.TryCreate(
+                BaseUrl,
+                UriKind.Absolute,
+                out var uri
+            ) &&
+                (string.Equals(
+                    uri.Host,
+                    new Uri(GlobalBaseUrl).Host,
+                    StringComparison.OrdinalIgnoreCase
+                )
+                || string.Equals(
+                    uri.Host,
+                    new Uri(GlobalRealtimeBaseUrl).Host,
+                    StringComparison.OrdinalIgnoreCase
+                ))
+                ? XmaxLogger.Language.English : XmaxLogger.Language.Chinese;
         }
 
         /// <summary>
-        /// 校验 API key 非空且服务地址为绝对 HTTP 或 HTTPS URL。
+        /// Requires a nonempty API key and an absolute HTTP or HTTPS service address for online use.
         /// </summary>
         internal void Validate()
         {
             if (ApiKey.Length == 0)
             {
-                throw new XmaxException(XmaxErrorCode.InvalidApiKey, "API key cannot be empty.");
+                throw new XmaxException(
+                    XmaxErrorCode.InvalidApiKey,
+                    "API key cannot be empty."
+                );
             }
 
-            if (!Uri.TryCreate(BaseUrl, UriKind.Absolute, out var uri) ||
+            if (!Uri.TryCreate(
+                BaseUrl,
+                UriKind.Absolute,
+                out var uri
+            ) ||
                 (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp))
             {
-                throw new XmaxException(XmaxErrorCode.InvalidBaseUrl, $"Invalid base URL: {BaseUrl}");
+                throw new XmaxException(
+                    XmaxErrorCode.InvalidBaseUrl,
+                    $"Invalid base URL: {BaseUrl}"
+                );
             }
         }
     }

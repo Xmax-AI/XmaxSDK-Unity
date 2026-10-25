@@ -1,20 +1,52 @@
+//
+//  EventDispatch.cs
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/XingMai/XmaxSDK-Unity
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 using System;
 
 namespace Xmax.SDK
 {
+
     /// <summary>
-    /// 隔离宿主订阅者异常，并支持在事件重入后中止过期通知。
+    /// Isolates subscriber failures and optionally rejects stale notifications after reentrancy.
     /// </summary>
     internal static class EventDispatch
     {
+
+        /// <summary>Notifies parameterless listeners while isolating subscriber failures.</summary>
+        internal static void Raise(
+            Action handlers
+        )
+        {
+            if (handlers == null)
+                return;
+            foreach (Action handler in handlers.GetInvocationList())
+            {
+                try
+                {
+                    handler();
+                }
+                catch (Exception exception)
+                {
+                    XmaxLogger.Realtime.Failure(exception);
+                }
+            }
+        }
+
         /// <summary>
-        /// 依次通知订阅者；单个订阅者抛出的异常只记录日志，不阻断其他有效回调。
+        /// Notifies valid subscribers in order while isolating individual subscriber failures.
         /// </summary>
-        /// <typeparam name="T">事件数据的类型。</typeparam>
-        /// <param name="handlers">待通知的多播委托；为 null 时不执行回调。</param>
-        /// <param name="value">向每个有效订阅者传递的事件数据。</param>
-        /// <param name="isCurrent">可选有效性检查，每次回调前执行；返回 false 时停止后续分发。</param>
-        internal static void Raise<T>(Action<T> handlers, T value, Func<bool> isCurrent = null)
+        internal static void Raise<T>(
+            Action<T> handlers,
+            T value,
+            Func<bool> isCurrent = null
+        )
         {
             if (handlers == null)
                 return;
@@ -27,6 +59,33 @@ namespace Xmax.SDK
                 try
                 {
                     handler(value);
+                }
+                catch (Exception exception)
+                {
+                    XmaxLogger.Realtime.Failure(exception);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Notifies two-argument listeners while isolating subscriber failures.
+        /// </summary>
+        internal static void Raise<TFirst, TSecond>(
+            Action<TFirst, TSecond> handlers,
+            TFirst first,
+            TSecond second
+        )
+        {
+            if (handlers == null)
+                return;
+            foreach (Action<TFirst, TSecond> handler in handlers.GetInvocationList())
+            {
+                try
+                {
+                    handler(
+                        first,
+                        second
+                    );
                 }
                 catch (Exception exception)
                 {

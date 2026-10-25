@@ -10,29 +10,29 @@ namespace Xmax.SDK.Tests
     public sealed class StreamAndMediaTests
     {
         private static RealtimeVideoFormat Format => new RealtimeVideoFormat(1280, 720, 30);
-        [UnityTest] public IEnumerator StreamFiltersTaskAndUserAndRebindsAfterRepublish() => AsyncTest.Run(async () =>
+        [UnityTest] public IEnumerator StreamFiltersResultUserAndRebindsAfterRepublish() => AsyncTest.Run(async () =>
         {
             var rtc = new FakeRtc();
-            var stream = new StreamController(rtc, 500, () => "test-task");
+            var stream = new StreamController(rtc, 500);
             await stream.ConnectAsync(FakeSessions.Session().JoinInfo, Format, CancellationToken.None);
             try
             {
                 var frames = 0;
                 stream.FrameReceived += frame => frames++;
-                var start = stream.StartGenerationAsync(new RealtimeContext("prompt"), Format, CancellationToken.None);
-                rtc.Sei("old-task"); rtc.Frame();
-                rtc.Sei("test-task", new RemoteStream("room", "other"));
+                var start = stream.StartGenerationAsync("test-task", new RealtimeContext("prompt"), Format, CancellationToken.None);
+                rtc.Frame();
+                rtc.Frame(new RemoteStream("room", "other"));
                 Assert.False(start.IsCompleted);
                 Assert.AreEqual(0, frames);
-                rtc.Sei("test-task");
+                rtc.Publish();
                 await start;
                 rtc.Frame();
                 rtc.Unpublish(); rtc.Frame();
-                rtc.Publish(); rtc.Sei("test-task"); rtc.Frame();
+                rtc.Publish(); rtc.Publish(); rtc.Frame();
                 Assert.AreEqual(2, frames);
-                Assert.AreEqual(1, rtc.Subscriptions);
+                Assert.AreEqual(2, rtc.Subscriptions);
                 await stream.StopGenerationAsync();
-                rtc.Sei("test-task"); rtc.Frame();
+                rtc.Publish(); rtc.Frame();
                 Assert.AreEqual(2, frames);
                 Assert.That(rtc.Messages[rtc.Messages.Count - 1], Does.Contain("test-task"));
             }
@@ -41,30 +41,31 @@ namespace Xmax.SDK.Tests
         [UnityTest] public IEnumerator GenerationTimeoutSendsStopAndAllowsRetry() => AsyncTest.Run(async () =>
         {
             var rtc = new FakeRtc();
-            var stream = new StreamController(rtc, 30, () => "test-task");
+            var stream = new StreamController(rtc, 30);
             await stream.ConnectAsync(FakeSessions.Session().JoinInfo, Format, CancellationToken.None);
             try
             {
-                await AsyncTest.Throws<XmaxException>(stream.StartGenerationAsync(new RealtimeContext("prompt"), Format, CancellationToken.None));
+                await AsyncTest.Throws<XmaxException>(stream.StartGenerationAsync("test-task", new RealtimeContext("prompt"), Format, CancellationToken.None));
                 Assert.That(rtc.Messages[rtc.Messages.Count - 1], Does.Contain("stop"));
-                var retry = stream.StartGenerationAsync(new RealtimeContext("retry"), Format, CancellationToken.None);
-                rtc.Sei("test-task");
-                Assert.AreEqual("test-task", await retry);
+                var retry = stream.StartGenerationAsync("test-task", new RealtimeContext("retry"), Format, CancellationToken.None);
+                rtc.Publish();
+                await retry;
+                Assert.That(rtc.Messages[0], Does.Contain("test-task"));
             }
             finally { await stream.DisconnectAsync(); }
         });
-        [UnityTest] public IEnumerator SeiFailureAfterConfirmationStillRaisesFatalError() => AsyncTest.Run(async () =>
+        [UnityTest] public IEnumerator RtcFailureAfterConfirmationStillRaisesFatalError() => AsyncTest.Run(async () =>
         {
             var rtc = new FakeRtc();
-            var stream = new StreamController(rtc, 500, () => "test-task");
+            var stream = new StreamController(rtc, 500);
             var failure = AsyncTest.Pending<XmaxException>();
             stream.FatalError += error => failure.TrySetResult(error);
             await stream.ConnectAsync(FakeSessions.Session().JoinInfo, Format, CancellationToken.None);
             try
             {
-                var start = stream.StartGenerationAsync(new RealtimeContext("prompt"), Format, CancellationToken.None);
-                rtc.Sei("test-task"); await start;
-                rtc.RejectSei = true;
+                var start = stream.StartGenerationAsync("test-task", new RealtimeContext("prompt"), Format, CancellationToken.None);
+                rtc.Publish(); await start;
+                rtc.Fail();
                 await AsyncDeadline.WaitAsync(failure.Task, 1000, CancellationToken.None);
                 Assert.AreEqual(XmaxErrorCode.RtcError, (await failure.Task).Code);
             }
@@ -121,17 +122,17 @@ namespace Xmax.SDK.Tests
             var video = new RealtimeVideoFormat(200, 100, 30);
             Assert.False(InteractionCoordinateMapper.TryMap(50, 10, 100, 100, video, RealtimeContentMode.Fit, out _));
             Assert.True(InteractionCoordinateMapper.TryMap(50, 50, 100, 100, video, RealtimeContentMode.Fit, out var center));
-            Assert.AreEqual(100, center.X); Assert.AreEqual(50, center.Y);
+            Assert.AreEqual(0.5f, center.x); Assert.AreEqual(0.5f, center.y);
             Assert.True(InteractionCoordinateMapper.TryMap(0, 0, 100, 100, video, RealtimeContentMode.Fill, out var crop));
-            Assert.AreEqual(50, crop.X); Assert.AreEqual(0, crop.Y);
+            Assert.AreEqual(0.25f, crop.x); Assert.AreEqual(0, crop.y);
             Assert.False(InteractionCoordinateMapper.TryMap(double.NaN, 0, 100, 100, video, RealtimeContentMode.Fill, out _));
         }
         [TestCase(1920, 1080)] [TestCase(100, 100)] [TestCase(10000, 100)] [TestCase(1, 10000)] [TestCase(832, 1472)]
         public void RecommendedFormatSatisfiesModelLimits(int width, int height)
         {
-            var format = new MediaService().RecommendVideoFormat(Models.Realtime(RealtimeModel.X2_0), width, height);
-            Assert.AreEqual(0, format.Width % 32); Assert.AreEqual(0, format.Height % 32);
-            Assert.That(format.Width * format.Height, Is.InRange(600000, 1280000));
+            var format = new MediaService().RecommendVideoFormat(RealtimeModel.X2_1_1_Preview_CN, width, height);
+            Assert.AreEqual(0, format.Width % 4); Assert.AreEqual(0, format.Height % 4);
+            Assert.That(format.Width * format.Height, Is.InRange(200000, 2100000));
             Assert.AreEqual(30, format.Fps);
         }
         [Test] public void ApiEnvelopeHandlesEmptyDeleteAndMalformedResponses()
@@ -145,20 +146,20 @@ namespace Xmax.SDK.Tests
         }
         [Test] public void RecommendationAppliesRoundingBeforeBoundarySearch()
         {
-            var model = Models.Realtime(RealtimeModel.X2_0);
+            var model = RealtimeModel.X2_1_1_Preview_CN;
             var service = new MediaService();
             var small = service.RecommendVideoFormat(model, 100, 100);
-            Assert.AreEqual(800, small.Width); Assert.AreEqual(800, small.Height);
+            Assert.AreEqual(448, small.Width); Assert.AreEqual(448, small.Height);
             var large = service.RecommendVideoFormat(model, 1920, 1080);
-            Assert.AreEqual(1504, large.Width); Assert.AreEqual(832, large.Height);
+            Assert.AreEqual(1920, large.Width); Assert.AreEqual(1080, large.Height);
         }
         [TestCase(false)] [TestCase(true)] public void SessionParsesObjectAndStringModelExtra(bool encoded)
         {
-            var extra = "{\"rtc_app_id\":\"app\",\"room_id\":\"room\",\"room_token\":\"token\"}";
+            var extra = "{\"rtc_app_id\":\"" + RtcEngineManager.DefaultAppId + "\",\"room_id\":\"room\",\"room_token\":\"token\",\"rtc_user_id\":\"user\",\"rtc_bot_id\":\"bot\"}";
             var data = JsonCodec.Decode("{\"sessionUid\":\"session\",\"userUid\":\"user\",\"modelExtra\":" +
                 (encoded ? "\"" + extra.Replace("\"", "\\\"") + "\"" : extra) + "}");
             var info = RealtimeSessionService.RequireJoinInfo(RealtimeSessionService.ParseSession(data));
-            Assert.AreEqual("user", info.UserId); Assert.AreEqual("app", info.AppId);
+            Assert.AreEqual("user", info.UserId); Assert.AreEqual(RtcEngineManager.DefaultAppId, info.AppId);
         }
         [Test] public void TextureUploaderHandlesStrideAndResolutionChange()
         {
@@ -173,9 +174,9 @@ namespace Xmax.SDK.Tests
         }
         [Test] public void ResetRenderIgnoresFramesFromStoppedGeneration()
         {
-            var render = new RenderController(); var track = new RealtimeVideoTrack("test"); var count = 0;
+            IRenderController render = new RenderController(); var track = new RealtimeVideoTrack("test"); var count = 0;
             track.FrameReceived += frame => count++;
-            render.Bind(track); render.BeginGeneration(); render.Receive(AsyncTest.Frame());
+            render.Bind(track); render.BeginGeneration(); render.SetRemoteStream(FakeRtc.Bot); render.Receive(AsyncTest.Frame());
             render.ResetGeneration(); render.Receive(AsyncTest.Frame());
             Assert.AreEqual(1, count); Assert.IsNull(render.LatestFrame);
         }
