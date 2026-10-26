@@ -105,7 +105,7 @@ namespace Xmax.SDK.Tests
         {
             var oldClient = new XmaxClient(new XmaxConfiguration("", loggerOptions: XmaxLoggerOption.Business));
             _ = new XmaxClient(new XmaxConfiguration("", loggerOptions: XmaxLoggerOption.Performance));
-            var manager = oldClient.CreateRealtimeManager(new RealtimeConfiguration(RealtimeModel.X2_1_1_Preview_CN, false));
+            var manager = oldClient.CreateRealtimeManager(new RealtimeConfiguration(RealtimeModel.X2_1, false));
             try
             {
                 Assert.True(XmaxLogger.IsEnabled(XmaxLoggerOption.Performance));
@@ -188,7 +188,7 @@ namespace Xmax.SDK.Tests
             var stream = new StreamController(rtc, timing: timing);
             var client = new XmaxClient(new XmaxConfiguration("test", XmaxEnvironment.Global, XmaxLoggerOption.Performance));
             var manager = new XmaxRealtimeManager(client.Configuration,
-                new RealtimeConfiguration(RealtimeModel.X2_1_1_Preview_CN, false), new FakeSessions(), stream, timing);
+                new RealtimeConfiguration(RealtimeModel.X2_1, false), new FakeSessions(), stream, timing);
             try
             {
                 var local = manager.CreateLocalExternalStream(new RealtimeVideoFormat(1280, 720, 30));

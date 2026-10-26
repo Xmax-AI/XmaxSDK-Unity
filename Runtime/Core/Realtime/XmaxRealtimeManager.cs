@@ -239,7 +239,7 @@ namespace Xmax.SDK
         /// </remarks>
         public XmaxRealtimeManager(
             string apiKey,
-            RealtimeModel model = RealtimeModel.X2_1_1_Preview_CN,
+            RealtimeModel model = RealtimeModel.X2_1,
             string baseUrl = XmaxConfiguration.DefaultBaseUrl,
             XmaxLoggerOption loggerOptions = XmaxLoggerOption.None
         )

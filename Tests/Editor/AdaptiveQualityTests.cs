@@ -395,7 +395,7 @@ namespace Xmax.SDK.Tests
             var manager = new XmaxRealtimeManager(
                 new XmaxConfiguration("test"),
                 new RealtimeConfiguration(
-                    RealtimeModel.X2_1_1_Preview_CN,
+                    RealtimeModel.X2_1,
                     false
                 ),
                 new FakeSessions(),
@@ -419,7 +419,7 @@ namespace Xmax.SDK.Tests
                 Assert.AreEqual(
                     new RealtimeVideoFormat(
                         1920,
-                        1024,
+                        1080,
                         30
                     ),
                     manager.GenerationVideoFormat.Value
@@ -439,7 +439,7 @@ namespace Xmax.SDK.Tests
                     manager.GenerationVideoFormat.Value.Width
                 );
                 Assert.AreEqual(
-                    1024,
+                    1080,
                     manager.GenerationVideoFormat.Value.Height
                 );
                 Assert.AreEqual(
@@ -481,7 +481,7 @@ namespace Xmax.SDK.Tests
             var manager = new XmaxRealtimeManager(
                 new XmaxConfiguration("test"),
                 new RealtimeConfiguration(
-                    RealtimeModel.X2_1_1_Preview_CN,
+                    RealtimeModel.X2_1,
                     false
                 ),
                 new FakeSessions(),

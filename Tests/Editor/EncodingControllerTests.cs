@@ -165,7 +165,7 @@ namespace Xmax.SDK.Tests
             var stream = new FakeStream();
             var manager = new XmaxRealtimeManager(
                 new XmaxConfiguration("test"),
-                new RealtimeConfiguration(RealtimeModel.X2_1_1_Preview_CN),
+                new RealtimeConfiguration(RealtimeModel.X2_1),
                 sessions,
                 stream
             );

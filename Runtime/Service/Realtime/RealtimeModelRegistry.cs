@@ -26,35 +26,44 @@ namespace Xmax.SDK
         private static readonly IReadOnlyDictionary<RealtimeModel, ModelDefinition> Definitions =
             new Dictionary<RealtimeModel, ModelDefinition>
             {
-                [RealtimeModel.X2_1_1_Preview_CN] = Preview("x2.1.1-preview-cn"),
-                [RealtimeModel.X2_1_1_Preview_US] = Preview("x2.1.1-preview-us")
+                [RealtimeModel.X2_1] = CreateX21Definition()
             };
 
         /// <summary>
-        /// Creates the shared sizing capabilities for a regional preview model.
+        /// Creates the X2.1 server identity and sizing capabilities.
         /// </summary>
-        private static ModelDefinition Preview(
-            string name
-        )
+        private static ModelDefinition CreateX21Definition()
         {
             return new ModelDefinition(
-                name,
+                "x2.1",
                 new RealtimeModelCapabilities(
                     200000,
                     2100000,
                     32,
                     new RealtimeVideoFormat(
-                        1024,
+                        1080,
                         1920,
                         30
                     ),
                     new RealtimeVideoSize(
-                        1024,
+                        1920,
+                        1080
+                    ),
+                    new RealtimeVideoSize(
+                        1080,
                         1920
                     ),
                     new RealtimeVideoSize(
-                        1920,
-                        1024
+                        1408,
+                        1408
+                    ),
+                    new RealtimeVideoSize(
+                        1152,
+                        1536
+                    ),
+                    new RealtimeVideoSize(
+                        1536,
+                        1152
                     )
                 )
             );

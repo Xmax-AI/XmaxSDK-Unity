@@ -22,7 +22,7 @@ namespace Xmax.SDK
     {
 
         /// <summary>
-        /// Creates a server session for the selected regional generation model.
+        /// Creates a server session for the selected realtime generation model.
         /// </summary>
         Task<XmaxSession> CreateSessionAsync(
             string model,
@@ -68,7 +68,7 @@ namespace Xmax.SDK
         }
 
         /// <summary>
-        /// Creates a server session for the selected regional generation model.
+        /// Creates a server session for the selected realtime generation model.
         /// </summary>
         public async Task<XmaxSession> CreateSessionAsync(
             string model,

@@ -13,14 +13,13 @@ Do not install another copy of the Agora plugin into the same project.
 ```csharp
 var client = new XmaxClient(new XmaxConfiguration(apiKey, XmaxEnvironment.China));
 var realtime = client.CreateRealtimeManager(new RealtimeConfiguration(
-    RealtimeModel.X2_1_1_Preview_CN,
+    RealtimeModel.X2_1,
     isAdaptiveQualityEnabled: true
 ));
 ```
 
-Choose `X2_1_1_Preview_CN` or `X2_1_1_Preview_US` explicitly for the regional
-model. Old model enum values are rejected instead of silently selecting a new
-model. RealtimeConfiguration accepts RealtimeModel directly; unsupported enum
+`RealtimeModel.X2_1` is the only supported model and is sent to the server as
+`x2.1`. RealtimeConfiguration accepts RealtimeModel directly; unsupported enum
 values are rejected. ModelDefinition is an internal registry detail.
 
 Standard Global configuration keeps the general API at
@@ -67,7 +66,7 @@ for its first result frame. A connected room without a generation task does not
 upload input frames; local stream preview remains available.
 
 Creating a local stream needs no valid API key and creates no server session.
-The no-argument creation overload uses the model's default `1024×1920@30`
+The no-argument creation overload uses the model's default `1080×1920@30`
 format. Replacing or closing a stream invalidates its previous input callback.
 
 For a host source with managed delivery, implement `IRealtimeExternalVideoSource`
@@ -109,8 +108,8 @@ their local media is no longer needed so other managers can acquire the engine.
 | Format | Rules |
 | --- | --- |
 | Source | Actual input dimensions and rate supplied by your app. |
-| Media baseline | 200,000–2,100,000 pixels for regional preview models, four-aligned, preserving aspect ratio where possible. Small sources can be upscaled. |
-| Generation canvas | Closest aspect-ratio match among `1024×1920` and `1920×1024`; independent of transport quality. |
+| Media baseline | 200,000–2,100,000 pixels for X2.1, four-aligned, preserving aspect ratio where possible. Small sources can be upscaled. |
+| Generation canvas | Closest aspect-ratio match among `1920×1080` (16:9), `1080×1920` (9:16), `1408×1408` (1:1), `1152×1536` (3:4), and `1536×1152` (4:3); independent of transport quality. |
 | Uplink | Derived from the unchanged media baseline, uplink quality level, and model minimum area; four-aligned and never upscaled above the baseline. |
 | Target return | Derived from the unchanged media baseline and downlink quality level; four-aligned, never upscaled, without the input minimum area restriction. |
 
@@ -122,7 +121,7 @@ External video, image dimensions, and decoded video dimensions do not need to
 match camera buckets. This sizing API does not capture or decode those sources.
 
 For example, `3840×2160` external input resolves to a `1920×1080` media
-baseline and a `1920×1024` generation canvas. The start and condition messages
+baseline and a `1920×1080` generation canvas. The start and condition messages
 use `padding: contain` when the baseline and canvas aspect ratios differ.
 Their `size` describes the canvas; `target_size` describes returned media.
 

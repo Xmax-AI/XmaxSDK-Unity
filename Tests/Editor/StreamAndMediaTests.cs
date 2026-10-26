@@ -130,7 +130,7 @@ namespace Xmax.SDK.Tests
         [TestCase(1920, 1080)] [TestCase(100, 100)] [TestCase(10000, 100)] [TestCase(1, 10000)] [TestCase(832, 1472)]
         public void RecommendedFormatSatisfiesModelLimits(int width, int height)
         {
-            var format = new MediaService().RecommendVideoFormat(RealtimeModel.X2_1_1_Preview_CN, width, height);
+            var format = new MediaService().RecommendVideoFormat(RealtimeModel.X2_1, width, height);
             Assert.AreEqual(0, format.Width % 4); Assert.AreEqual(0, format.Height % 4);
             Assert.That(format.Width * format.Height, Is.InRange(200000, 2100000));
             Assert.AreEqual(30, format.Fps);
@@ -146,7 +146,7 @@ namespace Xmax.SDK.Tests
         }
         [Test] public void RecommendationAppliesRoundingBeforeBoundarySearch()
         {
-            var model = RealtimeModel.X2_1_1_Preview_CN;
+            var model = RealtimeModel.X2_1;
             var service = new MediaService();
             var small = service.RecommendVideoFormat(model, 100, 100);
             Assert.AreEqual(448, small.Width); Assert.AreEqual(448, small.Height);

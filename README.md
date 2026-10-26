@@ -101,7 +101,7 @@ var client = new XmaxClient(
 );
 
 var realtime = client.CreateRealtimeManager(
-    new RealtimeConfiguration(RealtimeModel.X2_1_1_Preview_CN)
+    new RealtimeConfiguration(RealtimeModel.X2_1)
 );
 
 // Describe the actual source dimensions. This example uses 1920×1080@30.
@@ -168,15 +168,15 @@ events.
 
 ### Models, media sizing, and adaptive quality
 
-Use `RealtimeModel.X2_1_1_Preview_CN` or `RealtimeModel.X2_1_1_Preview_US`
-for the corresponding regional preview model. The previous `X2_0` and
-`X2_0_Pro` models are no longer supported.
+The SDK supports `RealtimeModel.X2_1`, sent to the server as `x2.1`.
+Its default format is `1080×1920@30`.
 
 External input preserves its aspect ratio within the model's 200,000–2,100,000
 pixel range. `LocalStream.VideoFormat` describes the resolved media baseline;
 `SourceVideoFormat` retains the input format. Generation uses the closest
-`1024×1920` or `1920×1024` canvas and requests containment when aspect ratios
-differ.
+canvas among `1920×1080` (16:9), `1080×1920` (9:16), `1408×1408` (1:1),
+`1152×1536` (3:4), and `1536×1152` (4:3), and requests containment when
+aspect ratios differ.
 
 Adaptive quality is enabled by default. Uplink and downlink independently
 select L1–L5, using recent model-specific history or L2 without valid history.

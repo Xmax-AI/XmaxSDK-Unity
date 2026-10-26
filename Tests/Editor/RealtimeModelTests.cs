@@ -15,14 +15,13 @@ using UnityEngine.TestTools;
 
 namespace Xmax.SDK.Tests
 {
-    /// <summary>Covers regional model capabilities and independent media and generation sizing.</summary>
+    /// <summary>Covers model capabilities and independent media and generation sizing.</summary>
     public sealed class RealtimeModelTests
     {
 
-        /// <summary>Registers exact regional model names with the shared sizing capabilities.</summary>
-        [TestCase(RealtimeModel.X2_1_1_Preview_CN, "x2.1.1-preview-cn")]
-        [TestCase(RealtimeModel.X2_1_1_Preview_US, "x2.1.1-preview-us")]
-        public void RegionalModelsHaveSharedSizingRules(
+        /// <summary>Registers the X2.1 server name with its sizing capabilities.</summary>
+        [TestCase(RealtimeModel.X2_1, "x2.1")]
+        public void X21ModelHasExpectedSizingRules(
             RealtimeModel model,
             string name
         )
@@ -51,18 +50,18 @@ namespace Xmax.SDK.Tests
             );
             Assert.AreEqual(
                 new RealtimeVideoFormat(
-                    1024,
+                    1080,
                     1920,
                     30
                 ),
                 capability.DefaultCameraVideoFormat
             );
             Assert.AreEqual(
-                2,
+                5,
                 capability.ResolutionBuckets.Count
             );
-            Assert.Throws<ArgumentOutOfRangeException>(() => RealtimeModelRegistry.Get((RealtimeModel)0));
-            Assert.Throws<ArgumentOutOfRangeException>(() => RealtimeModelRegistry.Get((RealtimeModel)1));
+            Assert.Throws<ArgumentOutOfRangeException>(() => RealtimeModelRegistry.Get((RealtimeModel)2));
+            Assert.Throws<ArgumentOutOfRangeException>(() => RealtimeModelRegistry.Get((RealtimeModel)3));
         }
 
         /// <summary>Resolves representative external input dimensions to the expected media baseline.</summary>
@@ -80,7 +79,7 @@ namespace Xmax.SDK.Tests
         )
         {
             var result = new MediaService().ResolveMediaSize(
-                RealtimeModel.X2_1_1_Preview_CN,
+                RealtimeModel.X2_1,
                 width,
                 height
             );
@@ -107,7 +106,7 @@ namespace Xmax.SDK.Tests
         {
             var service = new MediaService();
             var result = service.ResolveMediaSize(
-                RealtimeModel.X2_1_1_Preview_CN,
+                RealtimeModel.X2_1,
                 width,
                 height
             );
@@ -133,7 +132,7 @@ namespace Xmax.SDK.Tests
         public void ExternalBaselineAndGenerationCanvasAreIndependentOfCameraBuckets()
         {
             var service = new MediaService();
-            var model = RealtimeModel.X2_1_1_Preview_CN;
+            var model = RealtimeModel.X2_1;
             var media = service.ResolveMediaSize(
                 model,
                 1920,
@@ -154,24 +153,24 @@ namespace Xmax.SDK.Tests
             Assert.AreEqual(
                 new RealtimeVideoSize(
                     1920,
-                    1024
+                    1080
                 ),
                 canvas
             );
             Assert.Throws<XmaxException>(() => service.ResolveMediaSize(
                     model,
+                    1024,
                     1920,
-                    1080,
                     RealtimeMediaSource.Camera
                 ));
             Assert.AreEqual(
                 new RealtimeVideoSize(
-                    1024,
+                    1080,
                     1920
                 ),
                 service.ResolveMediaSize(
                     model,
-                    1024,
+                    1080,
                     1920,
                     RealtimeMediaSource.Camera
                 )

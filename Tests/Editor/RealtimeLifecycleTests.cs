@@ -19,14 +19,14 @@ namespace Xmax.SDK.Tests
         {
             XmaxLogger.Configure(XmaxLoggerOption.None);
             _sessions = new FakeSessions(); _stream = new FakeStream();
-            _manager = new XmaxRealtimeManager(new XmaxConfiguration("test"), new RealtimeConfiguration(RealtimeModel.X2_1_1_Preview_CN, false), _sessions, _stream);
+            _manager = new XmaxRealtimeManager(new XmaxConfiguration("test"), new RealtimeConfiguration(RealtimeModel.X2_1, false), _sessions, _stream);
         }
         [UnityTearDown] public IEnumerator TearDown() => AsyncTest.Run(() => _manager.CloseAsync());
 
         [UnityTest] public IEnumerator LocalCameraPreviewDoesNotRequireApiKey() => AsyncTest.Run(async () =>
         {
             var manager = new XmaxClient(new XmaxConfiguration("")).CreateRealtimeManager(
-                new RealtimeConfiguration(RealtimeModel.X2_1_1_Preview_CN, false));
+                new RealtimeConfiguration(RealtimeModel.X2_1, false));
             try
             {
                 var local = manager.CreateLocalExternalStream(Format);
