@@ -72,187 +72,51 @@ and add `"testables": ["ai.xmax.sdk"]`.
 
 ## Quick Start
 
-### Configure permissions
-
-Add a camera usage declaration to your application's Android manifest:
-
-```xml
-<uses-permission android:name="android.permission.CAMERA" />
-```
-
-Camera permissions and capture are managed by the host — the SDK never
-requests system permissions and never touches the camera itself.
-
-<br>
-
-### Generate and display video
-
-The following snippet creates a local camera stream, starts real-time
-generation, and binds the remote track to an I420 material. Create the
-manager and call its APIs on the Unity main thread:
+Use your front camera to turn yourself into a character from a reference image in real time.
 
 ```csharp
-using System.Threading.Tasks;
-using UnityEngine;
 using Xmax.SDK;
 
-var client = new XmaxClient(
-    new XmaxConfiguration("YOUR_XMAX_API_KEY")
-);
+// Initialize the client
+var client = new XmaxClient(new XmaxConfiguration(
+    "<YOUR_XMAX_API_KEY>",
+    XmaxEnvironment.Global
+));
 
-var realtime = client.CreateRealtimeManager(
-    new RealtimeConfiguration(RealtimeModel.X2_1)
-);
+// Initialize the realtime manager
+var realtime = client.CreateRealtimeManager(new RealtimeConfiguration(RealtimeModel.X2_1));
 
-// Describe the actual source dimensions. This example uses 1920×1080@30.
-// XmaxSDK resolves the local media baseline and generation canvas separately.
-var localStream = realtime.CreateLocalExternalStream(
-    new RealtimeVideoFormat(1920, 1080, 30)
-);
+// Create the video renderer
+var remoteTexture = new XmaxVideoTexture();
+// i420Material is the display object’s material, supporting _YTex, _UTex, and _VTex
 
-// Start your camera pipeline and push every frame on the main thread:
-// localStream.PushVideoFrame(XmaxVideoFrame.CreateRgba(rgba, width, height));
+// In Unity, capture camera frames in your app and submit them through an external stream
+var videoFormat = new RealtimeVideoFormat(1280, 720, 30);
+var localStream = realtime.CreateLocalExternalStream(videoFormat);
 
-var remoteStream = await realtime.StartGenerationAsync(
-    localStream,
-    new RealtimeContext(
-        prompt: "视频中角色替换成参考图中角色",
-        referencePath: "https://platform.xmaxai.com/images/source/charx/chatx_image1.jpg"
-    )
-);
-
-// The shader of i420Material must sample _YTex, _UTex, and _VTex; the SDK
-// handles strides, texture upload, and size changes.
-var texture = new XmaxVideoTexture();
-texture.Bind(remoteStream.VideoTrack, i420Material);
-```
-
-`ConnectAsync` and RTC only run on Android Player; calling them in the Unity
-Editor returns `NotSupported`. Local camera preview does not require a valid
-API key — the key and service URL are validated at connect time.
-
-<br>
-
-### Listen for events
-
-After creating `realtime`, register the listeners you need before creating
-the input stream or starting generation.
-
-| Listener | Purpose |
-| --- | --- |
-| `StateChanged` | Observe media readiness and realtime states; cleanup returns to `Ready` or `Idle`, with a termination `Reason`. |
-| `RemoteFrameReceived` | Receive borrowed generated frames on the Unity thread. |
-| `SetRemoteMediaFrameListener` | Register copied video packets with stream identity and continuity metadata on a serial background queue. |
-| `NetworkQualityChanged` | Monitor uplink and downlink network quality. |
-| `UplinkVideoStatisticsChanged` / `DownlinkVideoStatisticsChanged` | Receive measured video statistics, or null when unavailable after reset. |
-| `PerformanceAlarm` | Receive device encoding limitation or recovery with an optional suggested format. |
-
-For example, monitor state changes and termination reasons:
-
-```csharp
-realtime.StateChanged += state =>
+// Call continuously from the capture callback on the main thread with upright 1280 × 720 RGBA pixels
+void SubmitFrame(byte[] rgba, long timestampMicroseconds)
 {
-    Debug.Log($"State: {state.ConnectionState}");
-    if (state.Reason?.Kind == RealtimeReasonKind.Failure)
-        Debug.Log($"Ended with {state.Reason.Error.Code}: {state.Reason.Error.Message}");
-};
+    localStream.PushVideoFrame(XmaxVideoFrame.CreateRgba(
+        rgba, videoFormat.Width, videoFormat.Height,
+        timestampMicroseconds: timestampMicroseconds
+    ));
+}
+
+// Start generation after frame delivery begins, and keep submitting frames while awaiting it
+var remoteStream = await realtime.StartGenerationAsync(localStream, new RealtimeContext(
+    prompt: "视频中角色替换成参考图中角色",
+    referencePath: "https://cdn.xmax.ai/images/playground/charx/charx_image1.png?v=26&presetVersion=20261022"
+));
+
+// Bind the generated video
+remoteTexture.Bind(remoteStream.VideoTrack, i420Material);
+
+// Run the following when generation is no longer needed
+// Stop camera frame delivery in your app before releasing SDK resources
+await realtime.CloseAsync();
+remoteTexture.Dispose();
 ```
-
-Handle errors thrown by async calls with `try/catch`. Failures that end the
-realtime workflow are reported through `ErrorOccurred` after cleanup
-completes, sharing the same error instance as the terminal state's `Reason`;
-server session close failures are reported as recoverable `CleanupWarning`
-events.
-
-<br>
-
-### Models, media sizing, and adaptive quality
-
-The SDK supports `RealtimeModel.X2_1`, sent to the server as `x2.1`.
-Its default format is `1080×1920@30`.
-
-External input preserves its aspect ratio within the model's 200,000–2,100,000
-pixel range. `LocalStream.VideoFormat` describes the resolved media baseline;
-`SourceVideoFormat` retains the input format. Generation uses the closest
-canvas among `1920×1080` (16:9), `1080×1920` (9:16), `1408×1408` (1:1),
-`1152×1536` (3:4), and `1536×1152` (4:3), and requests containment when
-aspect ratios differ.
-
-Adaptive quality is enabled by default. Uplink and downlink independently
-select L1–L5, using recent model-specific history or L2 without valid history.
-To start at L1 and control quality manually, pass
-`isAdaptiveQualityEnabled: false` to `RealtimeConfiguration`.
-
-```csharp
-await realtime.SetUplinkQualityLevelAsync(RealtimeQualityLevel.L3);
-await realtime.SetDownlinkQualityLevelAsync(RealtimeQualityLevel.L2);
-```
-
-These APIs require active generation. A downlink change completes when the
-configuration has been submitted; received frames report the actual output
-dimensions. Media baseline dimensions and interaction coordinates stay
-unchanged when transport quality changes.
-
-`SendTracks` accepts normalized Unity `Vector2` coordinates from top-left
-`(0,0)` to bottom-right `(1,1)` across the full media.
-
-<br>
-
-### Upload reference media
-
-Storage uses the client's general service endpoint and works independently of
-realtime connections. Create and call its APIs on the Unity main thread:
-
-```csharp
-var storage = client.CreateStorageManager();
-var uploaded = await storage.UploadImageWithSafetyCheckAsync(
-    imageBytes,
-    "reference.png",
-    "image/png"
-);
-var context = new RealtimeContext("A watercolor landscape", uploaded.Url.AbsoluteUri);
-```
-
-Image and video uploads accept bytes or existing files, support progress and
-cancellation, and return the object URL and key. Downloads stream to a temporary
-file before committing the destination. See [Storage](./Materials/usage.md#storage)
-for overloads, transfer limits, and error handling.
-
-<br>
-
-### Resource Cleanup
-
-- **`DisconnectAsync` — Stop Remote Generation**
-
-  Stops remote generation, leaves the RTC room, and closes the server session
-  while retaining the engine with the local stream and preview. Use
-  this when ending the online session but staying on the current screen. You
-  can start a new session later using the same local stream:
-
-  ```csharp
-  await realtime.DisconnectAsync();
-  ```
-
-- **`CloseAsync` — Full Teardown & Release**
-
-  Ends the remote session, invalidates the local stream, and releases all
-  engine resources. Use this when leaving or dismissing the generation
-  screen:
-
-  ```csharp
-  await realtime.CloseAsync();
-  ```
-
-> **Note:** These methods are alternatives, not sequential steps. When
-> exiting a screen, call `CloseAsync` directly — there is no need to call
-> `DisconnectAsync` first.
-
-<br>
-
-> [!TIP]
-> For complete usage examples, including explicit local streams, encoding
-> configuration, interaction coordinates, and logging options, see the
-> [usage guide](./Materials/usage.md).
 
 <br>
 
