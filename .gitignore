@@ -32,5 +32,5 @@
 sysinfo.txt
 
 # Internal development documentation
-/docs/
-/docs.meta
+/[Dd]ocs/
+/[Dd]ocs.meta
