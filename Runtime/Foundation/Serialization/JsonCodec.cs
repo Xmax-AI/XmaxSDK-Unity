@@ -148,6 +148,11 @@ namespace Xmax.SDK
         internal bool IsLong => _data.IsLong;
 
         /// <summary>
+        /// Whether this value is a JSON number, including unsigned integers and fractions.
+        /// </summary>
+        internal bool IsNumber => _data.IsInt || _data.IsLong || _data.IsUInt || _data.IsULong || _data.IsDouble;
+
+        /// <summary>
         /// Checks whether a JSON object contains a named member.
         /// </summary>
         internal bool ContainsKey(
@@ -186,5 +191,23 @@ namespace Xmax.SDK
         public static explicit operator long(
             JsonValue value
         ) => (long)value._data;
+
+        /// <summary>
+        /// Converts a JSON number to double precision, rejecting other value types.
+        /// </summary>
+        public static explicit operator double(
+            JsonValue value
+        )
+        {
+            if (value._data.IsInt)
+                return (int)value._data;
+            if (value._data.IsLong)
+                return (long)value._data;
+            if (value._data.IsUInt)
+                return (uint)value._data;
+            if (value._data.IsULong)
+                return (ulong)value._data;
+            return (double)value._data;
+        }
     }
 }

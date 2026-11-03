@@ -8,14 +8,17 @@
 //  Copyright (c) 2026 XMAX.AI PTE. LTD.
 //
 
+using System.Threading;
+using System.Threading.Tasks;
+
 namespace Xmax.SDK
 {
 
-    /// <summary>Provides shared client configuration and services; creating a client applies process-wide logging preferences.</summary>
+    /// <summary>Provides account queries and shared client services; creating a client applies process-wide logging preferences.</summary>
     public sealed class XmaxClient
     {
 
-        /// <summary>The general business API used by storage managers.</summary>
+        /// <summary>The general business API used by account queries and storage managers.</summary>
         private readonly IApiService _api;
 
         /// <summary>The realtime session API shared by realtime managers.</summary>
@@ -42,6 +45,48 @@ namespace Xmax.SDK
                 Configuration.LoggerOptions,
                 Configuration.LogLanguage
             );
+        }
+
+        /// <summary>Fetches remaining credits for the account owning this client's API key.</summary>
+        ///
+        /// <remarks>
+        /// Call on the Unity main thread. Each call reads the current server balance from
+        /// the configured general API environment without creating a realtime session.
+        /// Fractional credits are preserved; invalid balances fail instead of returning zero.
+        /// </remarks>
+        ///
+        /// <param name="cancellationToken">Cancels the query and its HTTP request.</param>
+        ///
+        /// <returns>The server-reported remaining credits.</returns>
+        ///
+        /// <exception cref="XmaxException">Credentials, transport, or the response are invalid.</exception>
+        /// <exception cref="System.OperationCanceledException">The query is cancelled.</exception>
+        public async Task<XmaxCreditBalance> GetCreditBalanceAsync(
+            CancellationToken cancellationToken = default
+        )
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Configuration.Validate();
+            var response = await _api.RequestAsync(
+                "GET",
+                "/balance",
+                null,
+                cancellationToken
+            );
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var value = response != null && response.IsObject && response.ContainsKey("currentBalance")
+                ? response["currentBalance"] : null;
+            var currentBalance = value != null && value.IsNumber ? (double)value : double.NaN;
+            if (double.IsNaN(currentBalance) || double.IsInfinity(currentBalance) || currentBalance < 0)
+            {
+                throw new XmaxException(
+                    XmaxErrorCode.ApiError,
+                    "Credit balance must be a finite, nonnegative number."
+                );
+            }
+
+            return new XmaxCreditBalance(currentBalance);
         }
 
         /// <summary>Creates an independent realtime manager using this client's shared configuration and API service.</summary>

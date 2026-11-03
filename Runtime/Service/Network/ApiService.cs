@@ -92,6 +92,13 @@ namespace Xmax.SDK
                         "X-Api-Key",
                         _configuration.ApiKey
                     );
+                    if (method == "GET")
+                    {
+                        request.SetRequestHeader(
+                            "Cache-Control",
+                            "no-cache"
+                        );
+                    }
 
                     RuntimeInfo.ApplyHeaders(request);
                     var operation = request.SendWebRequest();

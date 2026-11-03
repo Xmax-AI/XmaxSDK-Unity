@@ -327,9 +327,17 @@ namespace Agora.Rtm.LitJson
                 return;
             }
 
-            // Shouldn't happen, but just in case, return something
-            token = JsonToken.Int;
-            token_value = 0;
+            // Preserve large numeric values without silently replacing overflow with zero.
+            double n_number;
+            if (double.TryParse(number, NumberStyles.Float, CultureInfo.InvariantCulture, out n_number))
+            {
+                token = JsonToken.Double;
+                token_value = n_number;
+
+                return;
+            }
+
+            throw new JsonException("JSON number cannot be represented: " + number);
         }
 
         private void ProcessSymbol()
