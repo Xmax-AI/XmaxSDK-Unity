@@ -201,6 +201,7 @@ namespace Xmax.SDK
         /// <inheritdoc/>
         public async Task DisconnectAsync()
         {
+            _room.CancelGenerationCommands();
             try
             {
                 await _room.StopHeartbeatAsync();
@@ -373,6 +374,7 @@ namespace Xmax.SDK
         public async Task StopGenerationAsync()
         {
             var task = _taskId;
+            _room.CancelGenerationCommands(task);
             _taskId = null;
             _signalSent = false;
             SetRemoteStream(null);

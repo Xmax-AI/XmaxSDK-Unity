@@ -81,6 +81,9 @@ namespace Xmax.SDK
         /// <inheritdoc/>
         public event Action<RemoteStream, XmaxVideoFrame> FrameReceived;
 
+        /// <inheritdoc/>
+        public event Action<RemoteStream, byte[]> RoomMessageReceived;
+
         /// <summary>Creates an unjoined room without owning native engine destruction.</summary>
         internal AgoraRtcRoom(
             IRtcEngine engine
@@ -391,6 +394,26 @@ namespace Xmax.SDK
                 EventDispatch.Raise(
                     VideoUnpublished,
                     key
+                );
+        }
+
+        /// <summary>Resolves the sender before delivering copied signaling from this room.</summary>
+        internal void NotifyRoomMessage(
+            uint uid,
+            byte[] data
+        )
+        {
+            if (_info == null)
+                return;
+            Announce(uid);
+            if (_info != null && _accounts.TryGetValue(uid, out var account))
+                EventDispatch.Raise(
+                    RoomMessageReceived,
+                    new RemoteStream(
+                        _info.RoomId,
+                        account
+                    ),
+                    data
                 );
         }
 

@@ -232,7 +232,8 @@ namespace Xmax.SDK
         /// The first generation requires conditions. Null reuses the last successful conditions. Updating an
         /// active generation retains its task. Newer public generation requests replace unfinished requests.
         /// Startup failure or caller cancellation releases the connection. Condition updates complete after
-        /// queue admission; cancellation does not retract admitted signaling or stop the existing generation.
+        /// a complete signaling send, without waiting for an ACK. Cancellation stops unfinished
+        /// signaling without stopping the existing generation.
         /// </remarks>
         Task StartGenerationAsync(
             RealtimeContext context = null,
@@ -249,7 +250,8 @@ namespace Xmax.SDK
         /// The first generation requires conditions. Null reuses the last successful conditions. Updating an
         /// active generation retains its task. Newer public generation requests replace unfinished requests.
         /// Startup failure or caller cancellation releases the connection. Condition updates complete after
-        /// queue admission; cancellation does not retract admitted signaling or stop the existing generation.
+        /// a complete signaling send, without waiting for an ACK. Cancellation stops unfinished
+        /// signaling without stopping the existing generation.
         /// </remarks>
         Task<RealtimeMediaStream> StartGenerationAsync(
             RealtimeMediaStream localStream,

@@ -120,6 +120,7 @@ namespace Xmax.SDK.Tests
         public event Action<RemoteStream> VideoUnpublished;
 
         public event Action<RemoteStream, XmaxVideoFrame> FrameReceived;
+        public event Action<RemoteStream, byte[]> RoomMessageReceived;
         internal readonly List<string> Messages = new List<string>();
         internal bool RejectMessages;
         internal Func<string, CancellationToken, Task> Send;
@@ -147,6 +148,7 @@ namespace Xmax.SDK.Tests
         public void DiscardPendingTracks() { }
         public void ConfigureVideoEncoding(VideoEncodingConfiguration configuration) { EncodingConfiguration = configuration; }
         internal void Frame(RemoteStream? key = null) => FrameReceived?.Invoke(key ?? Bot, AsyncTest.Frame());
+        internal void Message(byte[] data, RemoteStream? key = null) => RoomMessageReceived?.Invoke(key ?? Bot, data);
         internal void Publish(RemoteStream? key = null) => VideoPublished?.Invoke(key ?? Bot);
         internal void Unpublish() => VideoUnpublished?.Invoke(Bot);
         internal void Fail() => FatalError?.Invoke(new XmaxException(XmaxErrorCode.RtcError, "RTC failed."));

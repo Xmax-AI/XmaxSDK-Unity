@@ -26,6 +26,12 @@ namespace Xmax.SDK
         /// <summary>The heartbeat bound to this room's lifetime.</summary>
         private readonly RoomHeartbeat _heartbeat;
 
+        /// <summary>The command scheduler owned by the current room connection.</summary>
+        private RoomCommandController _commands;
+
+        /// <summary>The bounded fragment decoder reset at each connection boundary.</summary>
+        private readonly RoomMessageDecoder _decoder = new RoomMessageDecoder();
+
         /// <summary>The current room credentials, available while joining and connected.</summary>
         private RoomJoinConfiguration _info;
 
@@ -48,6 +54,7 @@ namespace Xmax.SDK
         {
             _rtc = rtc;
             _heartbeat = new RoomHeartbeat(rtc);
+            _rtc.RoomMessageReceived += OnRoomMessage;
         }
 
         /// <inheritdoc/>
@@ -69,6 +76,10 @@ namespace Xmax.SDK
             CancellationToken token
         )
         {
+            _commands?.Close();
+            _commands = null;
+            _decoder.Reset();
+            IsConnected = false;
             _info = info;
             await _rtc.JoinAsync(
                 info,
@@ -76,6 +87,11 @@ namespace Xmax.SDK
                 token
             );
             token.ThrowIfCancellationRequested();
+            _commands = new RoomCommandController((message, cancellation) => Send(
+                message,
+                cancellation,
+                reportFailure: false
+            ));
             IsConnected = true;
             _heartbeat.Start(info.UserId);
         }
@@ -84,6 +100,9 @@ namespace Xmax.SDK
         public async Task DisconnectAsync()
         {
             IsConnected = false;
+            _commands?.Close();
+            _commands = null;
+            _decoder.Reset();
             _info = null;
             try
             {
@@ -115,18 +134,23 @@ namespace Xmax.SDK
             RequireConnection();
             _rtc.DiscardPendingTracks();
             var canvas = _generation.Width > 0 ? _generation : format;
-            return Send(
-                RtcRoomEvent.Start(
-                    _info.UserId,
+            var userId = _info.UserId;
+            var target = _target.Width > 0 ? _target : format;
+            var contain = NeedsPadding(canvas);
+            return SendCommand(
+                RoomCommandController.Kind.Start,
+                taskId,
+                xid => RtcRoomEvent.Start(
+                    userId,
                     taskId,
                     canvas,
-                    _target.Width > 0 ? _target : format,
+                    target,
                     context,
-                    NeedsPadding(canvas),
-                    faceRestoration
+                    contain,
+                    faceRestoration,
+                    xid
                 ),
-                token,
-                reportFailure: false
+                token
             );
         }
 
@@ -143,19 +167,22 @@ namespace Xmax.SDK
             RequireConnection();
             _rtc.DiscardPendingTracks();
             var canvas = _generation.Width > 0 ? _generation : format;
-            var sending = Send(
-                RtcRoomEvent.ChangeCondition(
-                    _info.UserId,
+            var userId = _info.UserId;
+            var contain = NeedsPadding(canvas);
+            return SendCommand(
+                RoomCommandController.Kind.ChangeCondition,
+                taskId,
+                xid => RtcRoomEvent.ChangeCondition(
+                    userId,
                     taskId,
                     canvas,
                     context,
-                    NeedsPadding(canvas),
-                    faceRestoration
+                    contain,
+                    faceRestoration,
+                    xid
                 ),
-                CancellationToken.None
+                token
             );
-            _ = RtcMessageQueue.ObserveCompletionAsync(sending);
-            return Task.CompletedTask;
         }
 
         /// <inheritdoc/>
@@ -166,14 +193,17 @@ namespace Xmax.SDK
         )
         {
             RequireConnection();
-            await Send(
-                RtcRoomEvent.ChangeTargetSize(
-                    _info.UserId,
+            var userId = _info.UserId;
+            await SendCommand(
+                RoomCommandController.Kind.ChangeTargetSize,
+                taskId,
+                xid => RtcRoomEvent.ChangeTargetSize(
+                    userId,
                     taskId,
-                    format
+                    format,
+                    xid
                 ),
-                token,
-                reportFailure: false
+                token
             );
             token.ThrowIfCancellationRequested();
         }
@@ -188,8 +218,9 @@ namespace Xmax.SDK
             string taskId
         )
         {
+            CancelGenerationCommands(taskId);
             _rtc.DiscardPendingTracks();
-            if (taskId == null || _info == null)
+            if (string.IsNullOrEmpty(taskId) || _info == null)
                 return;
             try
             {
@@ -227,6 +258,58 @@ namespace Xmax.SDK
                 replacingPendingMessage: "tracks:" + taskId
             );
             _ = ObserveTracksAsync(sending);
+        }
+
+        /// <inheritdoc/>
+        public void CancelGenerationCommands(
+            string taskId = null
+        ) => _commands?.Cancel(string.IsNullOrEmpty(taskId) ? null : taskId);
+
+        /// <summary>Submits a command while rejecting configuration captured before the current room.</summary>
+        private Task SendCommand(
+            RoomCommandController.Kind kind,
+            string taskId,
+            Func<string, string> createMessage,
+            CancellationToken token
+        )
+        {
+            RequireConnection();
+            var commands = _commands;
+            var info = _info;
+            return commands.Send(
+                kind,
+                taskId,
+                createMessage,
+                token,
+                () =>
+                {
+                    token.ThrowIfCancellationRequested();
+                    if (!IsConnected || !ReferenceEquals(info, _info) || !ReferenceEquals(commands, _commands))
+                        throw new OperationCanceledException("RTC command room is no longer current.");
+                }
+            );
+        }
+
+        /// <summary>Accepts only valid receipts from this room's expected generation account.</summary>
+        private void OnRoomMessage(
+            RemoteStream sender,
+            byte[] data
+        )
+        {
+            var info = _info;
+            if (!IsConnected || info == null || sender.RoomId != info.RoomId ||
+                string.IsNullOrEmpty(sender.UserId) || sender.UserId == info.UserId ||
+                (!string.IsNullOrEmpty(info.BotName) && sender.UserId != info.BotName))
+                return;
+            var message = _decoder.Decode(sender.UserId, data);
+            if (RoomMessageDecoder.ReadString(message, "event") != "xid_ack")
+                return;
+            if (message.ContainsKey("user_id") && message["user_id"] != null &&
+                (!message["user_id"].IsString || (string)message["user_id"] != info.UserId))
+                return;
+            var xid = RoomMessageDecoder.ReadString(message, "xid");
+            if (RoomMessageDecoder.TryInteger(message, "count", 1, 9007199254740991L, out var count))
+                _commands?.Acknowledge(xid, count);
         }
 
         /// <summary>Submits one logical signal and logs its event and formatted contents.</summary>

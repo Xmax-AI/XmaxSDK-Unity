@@ -163,6 +163,36 @@ namespace Xmax.SDK
         }
 
         /// <inheritdoc/>
+        public override void OnStreamMessage(
+            RtcConnection connection,
+            uint remoteUid,
+            int streamId,
+            byte[] data,
+            ulong length,
+            ulong sentTs
+        )
+        {
+            if (data == null || length == 0 || length > 262144 || length > (ulong)data.LongLength)
+                return;
+            var copy = new byte[(int)length];
+            Buffer.BlockCopy(
+                data,
+                0,
+                copy,
+                0,
+                copy.Length
+            );
+            _owner.Dispatch(
+                _revision,
+                connection,
+                () => _owner.NotifyRoomMessage(
+                    remoteUid,
+                    copy
+                )
+            );
+        }
+
+        /// <inheritdoc/>
         public override void OnRequestToken(
             RtcConnection connection
         ) => _owner.Dispatch(

@@ -26,10 +26,10 @@ namespace Xmax.SDK.Tests
     {
 
         /// <summary>
-        /// Completes an admitted condition update without waiting for its native send.
+        /// Completes a condition update after its native send while preserving the existing generation.
         /// </summary>
         [UnityTest]
-        public IEnumerator AdmittedConditionUpdateCompletesBeforeSendingAndKeepsGenerationUsable() => AsyncTest.Run(async () =>
+        public IEnumerator ConditionUpdateWaitsForCompleteSendAndKeepsGenerationUsable() => AsyncTest.Run(async () =>
         {
             var sending = new TaskCompletionSource<bool>();
             var rtc = new FakeRtc
@@ -76,10 +76,11 @@ namespace Xmax.SDK.Tests
                         task,
                         cancellation.Token
                     );
-                    await change;
-                    cancellation.Cancel();
+                    Assert.False(change.IsCompleted);
                     Assert.False(sending.Task.IsCompleted);
                     sending.TrySetResult(true);
+                    await change;
+                    cancellation.Cancel();
                     var received = 0;
                     stream.FrameReceived += frame => received++;
                     rtc.Frame();
@@ -224,9 +225,9 @@ namespace Xmax.SDK.Tests
             }
         });
 
-        /// <summary>Cancels the caller wait while preserving admitted control packets and ordering.</summary>
+        /// <summary>Discards a cancelled queued control message while preserving following message ordering.</summary>
         [UnityTest]
-        public IEnumerator CancelingQueuedControlWaitPreservesItsAdmittedPackets() => AsyncTest.Run(async () =>
+        public IEnumerator CancelingQueuedControlPreventsItsPacketsWithoutStallingFollowingMessages() => AsyncTest.Run(async () =>
         {
             var sent = new List<string>();
             var queue = new RtcMessageQueue(
@@ -250,7 +251,7 @@ namespace Xmax.SDK.Tests
                         next
                     );
                     CollectionAssert.AreEqual(
-                        new[] { "start", "canceled", "next" },
+                        new[] { "start", "next" },
                         sent
                     );
                 }

@@ -31,7 +31,8 @@ namespace Xmax.SDK
             RealtimeVideoFormat target,
             RealtimeContext context,
             bool contain,
-            bool faceRestoration = false
+            bool faceRestoration = false,
+            string xid = null
         )
         {
             var parameters = Parameters(
@@ -49,7 +50,8 @@ namespace Xmax.SDK
                 "start",
                 userId,
                 taskId,
-                parameters
+                parameters,
+                xid
             );
         }
 
@@ -62,7 +64,8 @@ namespace Xmax.SDK
             RealtimeVideoFormat generation,
             RealtimeContext context,
             bool contain,
-            bool faceRestoration = false
+            bool faceRestoration = false,
+            string xid = null
         ) => Encode(
             "change_condition",
             userId,
@@ -72,7 +75,8 @@ namespace Xmax.SDK
                 context,
                 contain,
                 faceRestoration
-            )
+            ),
+            xid
         );
 
         /// <summary>
@@ -81,7 +85,8 @@ namespace Xmax.SDK
         internal static string ChangeTargetSize(
             string userId,
             string taskId,
-            RealtimeVideoFormat target
+            RealtimeVideoFormat target,
+            string xid = null
         )
         {
             var parameters = new Dictionary<string, object>();
@@ -93,7 +98,8 @@ namespace Xmax.SDK
                 "change_target_size",
                 userId,
                 taskId,
-                parameters
+                parameters,
+                xid
             );
         }
 
@@ -190,7 +196,8 @@ namespace Xmax.SDK
             string name,
             string userId,
             string taskId,
-            Dictionary<string, object> parameters = null
+            Dictionary<string, object> parameters = null,
+            string xid = null
         )
         {
             var message = Envelope(
@@ -200,6 +207,8 @@ namespace Xmax.SDK
             );
             if (parameters != null)
                 message["params"] = parameters;
+            if (xid != null)
+                message["xid"] = xid;
             return JsonCodec.Encode(message);
         }
 

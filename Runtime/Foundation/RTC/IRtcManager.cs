@@ -55,6 +55,9 @@ namespace Xmax.SDK
         /// </summary>
         event Action<RemoteStream, XmaxVideoFrame> FrameReceived;
 
+        /// <summary>Occurs for copied room signaling from a resolved account in the current connection.</summary>
+        event Action<RemoteStream, byte[]> RoomMessageReceived;
+
         /// <summary>
         /// Rejects RTC startup outside Android Player before any server session is created.
         /// </summary>
@@ -105,7 +108,7 @@ namespace Xmax.SDK
         /// Submits an ordered room message, completing after all native packets have been sent.
         /// </summary>
         ///
-        /// <remarks>Cancellation stops waiting without cancelling admitted packets; leaving the room cancels the queue.</remarks>
+        /// <remarks>Cancellation stops waiting and unsent fragments; leaving the room cancels the queue.</remarks>
         Task SendRoomMessageAsync(
             string message,
             CancellationToken cancellationToken = default,

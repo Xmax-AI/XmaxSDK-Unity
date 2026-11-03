@@ -62,6 +62,9 @@ namespace Xmax.SDK
         /// <inheritdoc/>
         public event Action<RemoteStream, XmaxVideoFrame> FrameReceived;
 
+        /// <inheritdoc/>
+        public event Action<RemoteStream, byte[]> RoomMessageReceived;
+
         /// <summary>Creates a transport coordinator using the configured native platform factory.</summary>
         internal RtcManager(
             Func<IRtcPlatform> makePlatform = null
@@ -222,6 +225,15 @@ namespace Xmax.SDK
                             FrameReceived,
                             stream,
                             frame
+                        );
+                };
+                room.RoomMessageReceived += (stream, data) =>
+                {
+                    if (IsCurrent(room, revision))
+                        EventDispatch.Raise(
+                            RoomMessageReceived,
+                            stream,
+                            data
                         );
                 };
                 room.Join(info);

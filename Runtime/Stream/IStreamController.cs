@@ -103,8 +103,9 @@ namespace Xmax.SDK
         /// </summary>
         ///
         /// <remarks>
-        /// Completes when admitted to the signaling queue. Native send failures trigger connection cleanup.
-        /// Cancellation or submission rejection preserves generation; admitted packets continue sending.
+        /// Completes after a successful full send without waiting for a receipt. Initial send failures
+        /// reach the caller; redundant send failures are logged. Cancellation stops unsent fragments
+        /// while preserving the existing generation.
         /// </remarks>
         Task ChangeGenerationConditionAsync(
             RealtimeContext context,

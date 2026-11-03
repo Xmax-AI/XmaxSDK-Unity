@@ -82,6 +82,11 @@ namespace Xmax.SDK
             string taskId
         );
 
+        /// <summary>Cancels a task's original and redundant signaling before asynchronous cleanup.</summary>
+        void CancelGenerationCommands(
+            string taskId = null
+        );
+
         /// <summary>Queues normalized interactions while coalescing older unsent trajectories.</summary>
         void SendTracks(
             string taskId,

@@ -50,6 +50,9 @@ namespace Xmax.SDK
         /// <summary>Occurs for a copied decoded frame with a resolved application account.</summary>
         event Action<RemoteStream, XmaxVideoFrame> FrameReceived;
 
+        /// <summary>Occurs for copied room signaling after the sender's account has been resolved.</summary>
+        event Action<RemoteStream, byte[]> RoomMessageReceived;
+
         /// <summary>Starts native join; completion is reported through Joined or FatalError.</summary>
         void Join(
             RoomJoinConfiguration info

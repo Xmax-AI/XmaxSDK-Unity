@@ -120,6 +120,9 @@ namespace Xmax.SDK
             /// </summary>
             internal bool Fatal;
 
+            /// <summary>The attempt cancellation invalidating queued and unsent packets.</summary>
+            internal CancellationToken Token;
+
             /// <summary>
             /// The send completion, shared by callers of replaced trajectories.
             /// </summary>
@@ -192,7 +195,7 @@ namespace Xmax.SDK
         /// Enqueues a whole message and returns completion of all its native sends.
         /// </summary>
         ///
-        /// <remarks>Cancellation stops the caller's wait; admitted packets continue until queue shutdown.</remarks>
+        /// <remarks>Cancellation stops the caller's wait and prevents unsent packets from being submitted.</remarks>
         internal Task Enqueue(
             string message,
             CancellationToken token = default,
@@ -208,8 +211,9 @@ namespace Xmax.SDK
             token.ThrowIfCancellationRequested();
             var packets = RtcMessageCodec.Encode(message);
             for (var i = _pending.Count - 1; i >= 0; i--)
-                if (_pending[i].Completion.Task.IsCanceled)
+                if (_pending[i].Completion.Task.IsCanceled || _pending[i].Token.IsCancellationRequested)
                 {
+                    _pending[i].Completion.TrySetCanceled();
                     _pending.RemoveAt(i);
                 }
             if (key != null)
@@ -226,7 +230,7 @@ namespace Xmax.SDK
                     XmaxErrorCode.RtcError,
                     "RTC signaling queue is full."
                 );
-            var next = new Entry { Packets = packets, Key = key, Fatal = fatal };
+            var next = new Entry { Packets = packets, Key = key, Fatal = fatal, Token = token };
             _ = ObserveCompletionAsync(next.Completion.Task);
             _pending.Add(next);
             if (!_running)
@@ -237,7 +241,7 @@ namespace Xmax.SDK
             return WaitForCompletionAsync(next.Completion.Task, token);
         }
 
-        /// <summary>Waits for admitted signaling without cancelling its queued or active packets.</summary>
+        /// <summary>Waits for signaling completion or caller cancellation.</summary>
         internal static async Task WaitForCompletionAsync(
             Task pending,
             CancellationToken token
@@ -316,32 +320,49 @@ namespace Xmax.SDK
                 await Task.Yield();
                 while (!_closed && _pending.Count > 0)
                 {
-                    if (_pending[0].Completion.Task.IsCanceled)
+                    var head = _pending[0];
+                    if (head.Completion.Task.IsCanceled || head.Token.IsCancellationRequested)
                     {
+                        head.Completion.TrySetCanceled();
                         _pending.RemoveAt(0);
                         continue;
                     }
-                    // Wait before dequeueing so a stale trajectory remains replaceable while rate limited.
-                    await WaitQuotaAsync(
-                        _pending[0].Packets[0].Length,
-                        _lifetime.Token
-                    );
-                    if (_closed || _pending.Count == 0)
+                    // A cancelled attempt must release quota waits without stalling the next command.
+                    try
+                    {
+                        using (var admission = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token, head.Token))
+                        {
+                            await WaitQuotaAsync(
+                                head.Packets[0].Length,
+                                admission.Token
+                            );
+                        }
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        if (_closed)
+                            break;
                         continue;
-                    var entry = _pending[0];
+                    }
+                    if (_closed || _pending.Count == 0 || !ReferenceEquals(head, _pending[0]))
+                        continue;
+                    var entry = head;
                     _pending.RemoveAt(0);
                     _active = entry;
                     try
                     {
-                        foreach (var packet in entry.Packets)
+                        using (var attempt = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token, entry.Token))
                         {
-                            await WaitQuotaAsync(
-                                packet.Length,
-                                _lifetime.Token
-                            );
-                            _lifetime.Token.ThrowIfCancellationRequested();
-                            _send(packet);
-                            _sent.Enqueue((_clock.Elapsed.TotalSeconds, packet.Length));
+                            foreach (var packet in entry.Packets)
+                            {
+                                await WaitQuotaAsync(
+                                    packet.Length,
+                                    attempt.Token
+                                );
+                                attempt.Token.ThrowIfCancellationRequested();
+                                _send(packet);
+                                _sent.Enqueue((_clock.Elapsed.TotalSeconds, packet.Length));
+                            }
                         }
                         entry.Completion.TrySetResult(true);
                     }
