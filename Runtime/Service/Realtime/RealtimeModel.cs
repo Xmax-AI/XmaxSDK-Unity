@@ -20,6 +20,11 @@ namespace Xmax.SDK
         /// <summary>
         /// The X2.1 realtime generation model.
         /// </summary>
-        X2_1 = 0
+        X2_1 = 0,
+
+        /// <summary>
+        /// The X2.1 Flash realtime generation model.
+        /// </summary>
+        X2_1_Flash = 1
     }
 }

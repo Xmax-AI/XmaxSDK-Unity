@@ -26,7 +26,8 @@ namespace Xmax.SDK
         private static readonly IReadOnlyDictionary<RealtimeModel, ModelDefinition> Definitions =
             new Dictionary<RealtimeModel, ModelDefinition>
             {
-                [RealtimeModel.X2_1] = CreateX21Definition()
+                [RealtimeModel.X2_1] = CreateX21Definition(),
+                [RealtimeModel.X2_1_Flash] = CreateX21FlashDefinition()
             };
 
         /// <summary>
@@ -64,6 +65,46 @@ namespace Xmax.SDK
                     new RealtimeVideoSize(
                         1536,
                         1152
+                    )
+                )
+            );
+        }
+
+        /// <summary>
+        /// Creates the X2.1 Flash server identity and sizing capabilities.
+        /// </summary>
+        private static ModelDefinition CreateX21FlashDefinition()
+        {
+            return new ModelDefinition(
+                "x2.1-flash",
+                new RealtimeModelCapabilities(
+                    0,
+                    960 * 960,
+                    32,
+                    new RealtimeVideoFormat(
+                        704,
+                        1280,
+                        30
+                    ),
+                    new RealtimeVideoSize(
+                        704,
+                        1280
+                    ),
+                    new RealtimeVideoSize(
+                        1280,
+                        704
+                    ),
+                    new RealtimeVideoSize(
+                        960,
+                        960
+                    ),
+                    new RealtimeVideoSize(
+                        1024,
+                        768
+                    ),
+                    new RealtimeVideoSize(
+                        768,
+                        1024
                     )
                 )
             );

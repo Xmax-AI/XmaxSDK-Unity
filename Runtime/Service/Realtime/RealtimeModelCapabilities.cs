@@ -42,7 +42,7 @@ namespace Xmax.SDK
         /// <summary>The fixed camera and generation canvas dimensions. External media need not match a bucket.</summary>
         public IReadOnlyList<RealtimeVideoSize> ResolutionBuckets { get; }
 
-        /// <summary>The minimum local media and uplink area, in pixels.</summary>
+        /// <summary>The minimum local media and uplink area, in pixels, or zero when the model has no area floor.</summary>
         public int MinimumPixels { get; }
 
         /// <summary>The maximum local media area, in pixels.</summary>
